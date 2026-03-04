@@ -461,7 +461,12 @@ case "${1:-status}" in
         running=false
         case "$OS" in
             macos)
-                launchctl list "$LABEL" &>/dev/null 2>&1 && running=true
+                # Prefer modern launchctl domains; fall back to list
+                if launchctl print "gui/$(id -u)/${LABEL}" &>/dev/null; then
+                    running=true
+                elif launchctl list 2>/dev/null | grep -q "${LABEL}"; then
+                    running=true
+                fi
                 ;;
             linux)
                 systemctl --user is-active codex-remote-hub &>/dev/null && running=true

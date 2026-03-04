@@ -42,6 +42,7 @@
     margin: 0 auto;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overscroll-behavior: contain;
   }
 
   /* ── Header ── */
@@ -543,6 +544,52 @@
     letter-spacing: 0.5px;
   }
 
+  /* ── Pull to refresh ── */
+  .ptr {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 64px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    pointer-events: none;
+    transform: translateY(-100%);
+    transition: transform 0.2s ease;
+    z-index: 999;
+  }
+
+  .ptr-inner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 8px 12px;
+    border-radius: 20px;
+    margin-bottom: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  }
+
+  .ptr-icon {
+    width: 14px;
+    height: 14px;
+    display: inline-block;
+    border: 2px solid var(--text-dim);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    transform: rotate(0deg);
+    transition: transform 0.15s ease;
+  }
+
+  .ptr-icon.spin {
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
   /* ── Animations ── */
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(8px); }
@@ -637,6 +684,13 @@
 </style>
 </head>
 <body>
+  <!-- Pull to Refresh indicator -->
+  <div class="ptr" id="ptr">
+    <div class="ptr-inner">
+      <span class="ptr-icon" id="ptr-icon"></span>
+      <span id="ptr-text" style="font-size:12px;">Pull to refresh</span>
+    </div>
+  </div>
   <div class="header">
     <span class="logo">
       <span class="logo-prompt">&gt;_ </span><span class="logo-text">codex remote hub</span><span class="logo-cursor"></span>
@@ -969,6 +1023,75 @@
   };
 
   loadCapturable();
+
+  // ── Pull to refresh (mobile) ──
+  (function() {
+    var ptr = document.getElementById('ptr');
+    var icon = document.getElementById('ptr-icon');
+    var text = document.getElementById('ptr-text');
+    var startY = 0;
+    var pulling = false;
+    var distance = 0;
+    var threshold = 60;
+
+    function hasActiveModal() {
+      var modals = ['folder-modal', 'skip-modal'];
+      return modals.some(function(id){
+        var el = document.getElementById(id);
+        return el && el.classList.contains('active');
+      });
+    }
+
+    window.addEventListener('touchstart', function(e) {
+      if (hasActiveModal()) return;
+      if (document.scrollingElement.scrollTop === 0) {
+        startY = e.touches[0].clientY;
+        pulling = true;
+        distance = 0;
+        ptr.style.transition = 'none';
+        icon.classList.remove('spin');
+        text.textContent = 'Pull to refresh';
+      }
+    }, { passive: true });
+
+    window.addEventListener('touchmove', function(e) {
+      if (!pulling) return;
+      var currentY = e.touches[0].clientY;
+      var dy = currentY - startY;
+      if (dy > 0) {
+        // Reduce sensitivity and cap distance
+        distance = Math.min(80, dy * 0.6);
+        // Prevent the native bounce while pulling
+        e.preventDefault();
+        ptr.style.transform = 'translateY(' + (distance) + 'px)';
+        // Rotate icon to give feedback
+        icon.style.transform = 'rotate(' + Math.min(180, distance * 3) + 'deg)';
+        text.textContent = distance > threshold ? 'Release to refresh' : 'Pull to refresh';
+      }
+    }, { passive: false });
+
+    function resetPTR() {
+      ptr.style.transition = 'transform 0.2s ease';
+      ptr.style.transform = 'translateY(-100%)';
+      icon.style.transform = 'rotate(0deg)';
+      pulling = false;
+      distance = 0;
+    }
+
+    window.addEventListener('touchend', function() {
+      if (!pulling) return;
+      if (distance > threshold) {
+        // Lock indicator, show spinner, then reload
+        ptr.style.transition = 'transform 0.15s ease';
+        ptr.style.transform = 'translateY(56px)';
+        icon.classList.add('spin');
+        text.textContent = 'Refreshing…';
+        setTimeout(function(){ window.location.reload(); }, 150);
+      } else {
+        resetPTR();
+      }
+    });
+  })();
 </script>
 </body>
 </html>

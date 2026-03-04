@@ -42,11 +42,18 @@ def _find_bin(name: str) -> str:
     return path if path else name
 
 
+def _session_name(name: str) -> str:
+    """Build tmux session name, avoiding double 'codex-' prefix."""
+    if name.startswith("codex-"):
+        return name
+    return f"codex-{name}"
+
+
 # ─── Config ──────────────────────────────────────────────────────────────────
 
 HUB_PORT = int(os.environ.get("CODEX_REMOTE_HUB_PORT", 7690))
-BASE_PORT = 7700
-MAX_PORT = 7799
+BASE_PORT = 7800
+MAX_PORT = 7899
 TTYD_BIN = os.environ.get("TTYD_BIN", _find_bin("ttyd"))
 TMUX_BIN = os.environ.get("TMUX_BIN", _find_bin("tmux"))
 CODEX_BIN = os.environ.get("CODEX_BIN", _find_bin("codex"))
@@ -164,7 +171,7 @@ def _find_latest_session_id(cwd: str) -> Optional[str]:
 
 
 def port_for_name(name: str) -> int:
-    """Generate a deterministic port (7700-7799) from a session name."""
+    """Generate a deterministic port (7800-7899) from a session name."""
     h = int(hashlib.md5(name.encode()).hexdigest(), 16)
     return BASE_PORT + (h % (MAX_PORT - BASE_PORT))
 
@@ -177,13 +184,13 @@ def _port_in_use_socket(port: int) -> bool:
 
 
 def _get_listening_ports_lsof() -> set[int]:
-    """Get listening ports in 7700-7799 range using lsof (macOS/Linux)."""
+    """Get listening ports in 7800-7899 range using lsof (macOS/Linux)."""
     lsof = shutil.which("lsof")
     if not lsof:
         return set()
     try:
         out = subprocess.check_output(
-            [lsof, "-iTCP:7700-7799", "-sTCP:LISTEN", "-P", "-n"],
+            [lsof, f"-iTCP:{BASE_PORT}-{MAX_PORT}", "-sTCP:LISTEN", "-P", "-n"],
             text=True, stderr=subprocess.DEVNULL
         )
         ports: set[int] = set()
@@ -198,7 +205,7 @@ def _get_listening_ports_lsof() -> set[int]:
 
 
 def _get_listening_ports_ss() -> set[int]:
-    """Get listening ports in 7700-7799 range using ss (Linux)."""
+    """Get listening ports in 7800-7899 range using ss (Linux)."""
     ss = shutil.which("ss")
     if not ss:
         return set()
@@ -444,7 +451,7 @@ def _start_ttyd(session: str, port: int) -> None:
 def start_session(name: str, directory: Optional[str] = None, skip_permissions: bool = False) -> int:
     """Start a tmux + ttyd session. Returns the assigned port."""
     port = port_for_name(name)
-    session = f"codex-{name}"
+    session = _session_name(name)
 
     r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                        capture_output=True)
@@ -481,7 +488,7 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
     base_name = name
     suffix = 1
     while True:
-        session = f"codex-{name}"
+        session = _session_name(name)
         r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                            capture_output=True)
         if r.returncode != 0:
@@ -489,7 +496,7 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
         suffix += 1
         name = f"{base_name}-{suffix}"
 
-    session = f"codex-{name}"
+    session = _session_name(name)
     port = port_for_name(name)
 
     # Build the codex command with fork or resume --last
@@ -536,7 +543,7 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
 def stop_session(name: str) -> None:
     """Stop ttyd and kill the tmux session."""
     port = port_for_name(name)
-    session = f"codex-{name}"
+    session = _session_name(name)
 
     pkill = shutil.which("pkill")
     if pkill:
@@ -810,7 +817,7 @@ class HubHandler(BaseHTTPRequestHandler):
         # API: send special key via tmux
         if path.startswith("/api/send-keys/"):
             name = path.split("/api/send-keys/")[1].strip("/")
-            session = f"codex-{name}"
+            session = _session_name(name)
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
             data = json.loads(body)
@@ -837,7 +844,7 @@ class HubHandler(BaseHTTPRequestHandler):
         # API: send text (paste) via tmux
         if path.startswith("/api/send-text/"):
             name = path.split("/api/send-text/")[1].strip("/")
-            session = f"codex-{name}"
+            session = _session_name(name)
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
             data = json.loads(body)
@@ -863,7 +870,7 @@ class HubHandler(BaseHTTPRequestHandler):
         # API: scroll via tmux copy-mode
         if path.startswith("/api/scroll/"):
             name = path.split("/api/scroll/")[1].strip("/")
-            session = f"codex-{name}"
+            session = _session_name(name)
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
             data = json.loads(body)
@@ -935,7 +942,7 @@ def cmd_stop():
         print("  Codex Remote Hub is not running")
     pkill = shutil.which("pkill")
     if pkill:
-        subprocess.run([pkill, "-f", "ttyd.*-p 77"], capture_output=True)
+        subprocess.run([pkill, "-f", "ttyd.*-p 78"], capture_output=True)
 
 
 def cmd_status():
