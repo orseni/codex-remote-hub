@@ -54,9 +54,16 @@ def _session_name(name: str) -> str:
 HUB_PORT = int(os.environ.get("CODEX_REMOTE_HUB_PORT", 7690))
 BASE_PORT = 7800
 MAX_PORT = 7899
-TTYD_BIN = os.environ.get("TTYD_BIN", _find_bin("ttyd"))
-TMUX_BIN = os.environ.get("TMUX_BIN", _find_bin("tmux"))
-CODEX_BIN = os.environ.get("CODEX_BIN", _find_bin("codex"))
+def _resolve_bin(env_var: str, name: str) -> str:
+    """Get binary path from env var, falling back to PATH lookup if missing or stale."""
+    path = os.environ.get(env_var, "")
+    if path and os.path.isfile(path) and os.access(path, os.X_OK):
+        return path
+    return _find_bin(name)
+
+TTYD_BIN = _resolve_bin("TTYD_BIN", "ttyd")
+TMUX_BIN = _resolve_bin("TMUX_BIN", "tmux")
+CODEX_BIN = _resolve_bin("CODEX_BIN", "codex")
 FONT_SIZE = int(os.environ.get("CODEX_FONT_SIZE", 11))
 DEV_ROOT = os.environ.get("CODEX_DEV_ROOT", os.path.expanduser("~/Projects"))
 INSTALL_DIR = os.environ.get("CODEX_REMOTE_HUB_DIR", os.path.expanduser("~/.codex-remote-hub"))
@@ -254,8 +261,48 @@ def port_in_use(port: int) -> bool:
     return _port_in_use_socket(port)
 
 
+def _cleanup_orphan_ttyd() -> None:
+    """Kill ttyd processes whose tmux sessions no longer exist."""
+    try:
+        ps_out = subprocess.check_output(
+            ["ps", "-ww", "-eo", "pid,command"],
+            text=True, stderr=subprocess.DEVNULL
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return
+    for line in ps_out.strip().split("\n"):
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            continue
+        pid_str, cmd = parts
+        if not pid_str.strip().isdigit():
+            continue
+        if "ttyd" not in cmd or "attach-session" not in cmd:
+            continue
+        # Extract session name from "... attach-session -t <session>"
+        cmd_parts = cmd.split()
+        session_name = None
+        for i, p in enumerate(cmd_parts):
+            if p == "attach-session" and i + 2 < len(cmd_parts) and cmd_parts[i + 1] == "-t":
+                session_name = cmd_parts[i + 2]
+                break
+        if not session_name:
+            continue
+        # Check if tmux session exists
+        r = subprocess.run(
+            [TMUX_BIN, "has-session", "-t", session_name],
+            capture_output=True
+        )
+        if r.returncode != 0:
+            try:
+                os.kill(int(pid_str.strip()), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+
 def get_sessions() -> list[dict]:
     """List active Codex tmux sessions with their status."""
+    _cleanup_orphan_ttyd()
     try:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=2) as ex:
@@ -418,10 +465,55 @@ def get_folders(rel_path: str = "") -> dict:
     }
 
 
+def _kill_ttyd_on_port(port: int) -> None:
+    """Kill any ttyd process listening on the given port."""
+    try:
+        out = subprocess.check_output(
+            ["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            text=True, stderr=subprocess.DEVNULL
+        )
+        for line in out.strip().split("\n"):
+            pid = line.strip()
+            if pid.isdigit():
+                os.kill(int(pid), signal.SIGTERM)
+        time.sleep(0.2)
+    except (subprocess.CalledProcessError, FileNotFoundError, ProcessLookupError):
+        pass
+
+
+def _ttyd_session_on_port(port: int) -> Optional[str]:
+    """Return the tmux session name that a ttyd on this port is attached to, or None."""
+    try:
+        out = subprocess.check_output(
+            ["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+            text=True, stderr=subprocess.DEVNULL
+        )
+        for line in out.strip().split("\n"):
+            pid = line.strip()
+            if not pid.isdigit():
+                continue
+            cmd_out = subprocess.check_output(
+                ["ps", "-ww", "-p", pid, "-o", "command="],
+                text=True, stderr=subprocess.DEVNULL
+            )
+            # Extract session name from "... attach-session -t <session>"
+            parts = cmd_out.strip().split()
+            for i, part in enumerate(parts):
+                if part == "attach-session" and i + 2 < len(parts) and parts[i + 1] == "-t":
+                    return parts[i + 2]
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    return None
+
+
 def _start_ttyd(session: str, port: int) -> None:
     """Start a ttyd process attached to a tmux session if not already running."""
     if port_in_use(port):
-        return
+        existing = _ttyd_session_on_port(port)
+        if existing == session:
+            return
+        # Port occupied by ttyd for a different/dead session; reclaim it
+        _kill_ttyd_on_port(port)
     ttyd_cmd = [
         TTYD_BIN, "-W", "-p", str(port),
         "--ping-interval", "5",
@@ -481,7 +573,7 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
                     name: str, skip_permissions: bool = False) -> tuple:
     """Capture a running Codex CLI session into a tmux + ttyd session.
 
-    Uses `codex fork <session_id>` to restore the conversation in a new tmux session.
+    Uses `codex fork <session_id>` to branch the conversation into a new tmux session.
     Returns the assigned port.
     """
     # Ensure unique session name
@@ -500,7 +592,7 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
     port = port_for_name(name)
 
     # Build the codex command with fork or resume --last
-    cmd = [TMUX_BIN, "new-session", "-d", "-s", session]
+    cmd = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
     if cwd and os.path.isdir(cwd):
         cmd += ["-c", cwd]
 
@@ -515,15 +607,15 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
     clean_env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      env=clean_env)
-    time.sleep(0.5)
+    time.sleep(1.0)
 
     # Verify the tmux session survived (codex might have failed and exited)
     r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                        capture_output=True)
     if r.returncode != 0:
-        # Session died — fall back to resume --last if we were using fork
+        # fork/resume failed — try resume --last as fallback
         if session_id:
-            cmd_fallback = [TMUX_BIN, "new-session", "-d", "-s", session]
+            cmd_fallback = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
             if cwd and os.path.isdir(cwd):
                 cmd_fallback += ["-c", cwd]
             cmd_fallback += [CODEX_BIN, "resume", "--last"]
@@ -531,7 +623,21 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
                 cmd_fallback.append("--dangerously-bypass-approvals-and-sandbox")
             subprocess.Popen(cmd_fallback, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, env=clean_env)
-            time.sleep(0.5)
+            time.sleep(1.0)
+
+    # Final check — if still no session, start fresh codex so ttyd has something to connect to
+    r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
+                       capture_output=True)
+    if r.returncode != 0:
+        fallback_cmd = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
+        if cwd and os.path.isdir(cwd):
+            fallback_cmd += ["-c", cwd]
+        fallback_cmd.append(CODEX_BIN)
+        if skip_permissions:
+            fallback_cmd.append("--dangerously-bypass-approvals-and-sandbox")
+        subprocess.Popen(fallback_cmd, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, env=clean_env)
+        time.sleep(0.5)
 
     subprocess.run([TMUX_BIN, "set-option", "-t", session, "mouse", "on"],
                    capture_output=True)
