@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# SSL certificates
+hub.crt
+hub.key
+*.crt
+*.key
+
+# PID files
+*.pid
+
+# Claude Code local settings
+.claude/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node (if any tooling added)
+node_modules/
+
+# Generated
+ttyd-index.html
+
+# Local articles/drafts
+article-medium.md

@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Codex Remote Hub">
+<meta name="theme-color" content="#0a0a0f">
+<title>Codex Remote Hub</title>
+<link rel="apple-touch-icon" href="/icon.png">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #13131a;
+    --surface-hover: #1a1a24;
+    --border: #252530;
+    --text: #e4e2db;
+    --text-dim: #6b6a65;
+    --accent: #10a37f;
+    --accent-hover: #1ab98f;
+    --accent-glow: rgba(16, 163, 127, 0.08);
+    --danger: #e54545;
+    --danger-bg: rgba(229, 69, 69, 0.08);
+    --success: #4ade80;
+    --success-bg: rgba(74, 222, 128, 0.1);
+    --radius: 12px;
+    --font-mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100dvh;
+    padding: env(safe-area-inset-top) 16px 100px;
+    max-width: 720px;
+    margin: 0 auto;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* ── Header ── */
+  .header {
+    padding: 40px 0 6px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+
+  .logo {
+    font-family: var(--font-mono);
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    display: flex;
+    align-items: baseline;
+    gap: 0;
+  }
+
+  .logo-prompt {
+    color: var(--accent);
+  }
+
+  .logo-text {
+    background: linear-gradient(135deg, var(--accent), #6ee7b7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .logo-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 20px;
+    background: var(--accent);
+    margin-left: 2px;
+    animation: blink 1s step-end infinite;
+    vertical-align: text-bottom;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-bottom: 28px;
+  }
+
+  .counter {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    background: var(--surface);
+    padding: 4px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Cards ── */
+  .sessions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--text-dim);
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card:active {
+    transform: scale(0.98);
+    background: var(--surface-hover);
+  }
+
+  .card.card-active {
+    border-left-color: var(--accent);
+  }
+
+  .card.card-idle {
+    border-left-color: var(--text-dim);
+    opacity: 0.85;
+  }
+
+  .card-link {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    text-decoration: none;
+    color: inherit;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .card-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .status-dot.active {
+    background: var(--success);
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.4);
+  }
+
+  .status-dot.idle {
+    background: var(--text-dim);
+  }
+
+  .card-name {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--text);
+  }
+
+  .card-meta {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  .card-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .badge {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+  }
+
+  .badge.active {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+
+  .arrow {
+    color: var(--text-dim);
+    font-size: 20px;
+    font-weight: 300;
+    opacity: 0.6;
+  }
+
+  .stop-btn {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    padding: 16px 16px 16px 8px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: color 0.2s;
+    display: flex;
+    align-items: center;
+  }
+
+  .stop-btn:hover, .stop-btn:active { color: var(--danger); }
+
+  /* ── Empty State ── */
+  .empty {
+    text-align: center;
+    padding: 56px 20px;
+    color: var(--text-dim);
+  }
+
+  .empty-icon {
+    margin-bottom: 16px;
+    opacity: 0.4;
+  }
+
+  .empty p { font-size: 16px; font-weight: 500; }
+  .empty-sub { font-size: 13px; margin-top: 6px; opacity: 0.6; font-weight: 400; }
+
+  /* ── New Session Form ── */
+  .form-section {
+    margin-top: 28px;
+    padding-top: 28px;
+    border-top: 1px solid var(--border);
+  }
+
+  .form-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+    display: block;
+  }
+
+  .form-row {
+    display: flex;
+    gap: 10px;
+  }
+
+  .form-input {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 15px;
+    outline: none;
+    transition: border-color 0.2s;
+    -webkit-appearance: none;
+  }
+
+  .form-input::placeholder { color: var(--text-dim); opacity: 0.5; }
+  .form-input:focus { border-color: var(--accent); }
+
+  .form-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    padding: 14px 24px;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .form-btn:hover { background: var(--accent-hover); }
+
+  .form-btn:active {
+    transform: scale(0.96);
+    opacity: 0.9;
+  }
+
+  /* ── Folder Picker Modal ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    z-index: 1000;
+    animation: fadeOverlay 0.2s ease-out;
+  }
+
+  .modal-overlay.active { display: flex; align-items: flex-end; justify-content: center; }
+
+  @keyframes fadeOverlay {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .modal {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 20px 20px 0 0;
+    width: 100%;
+    max-width: 540px;
+    max-height: 85dvh;
+    display: flex;
+    flex-direction: column;
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes slideUp {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+
+  .modal-handle {
+    width: 36px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 4px;
+    margin: 10px auto 0;
+    flex-shrink: 0;
+  }
+
+  .modal-header {
+    padding: 16px 20px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  .modal-title {
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .modal-close {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+    transition: all 0.15s;
+  }
+
+  .modal-close:active { background: var(--surface-hover); }
+
+  /* Breadcrumb */
+  .breadcrumb {
+    padding: 0 20px 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+
+  .crumb {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 6px;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+  }
+
+  .crumb:hover { background: var(--surface); }
+  .crumb.current { color: var(--accent); font-weight: 600; }
+  .crumb-sep { color: var(--text-dim); opacity: 0.4; font-size: 11px; }
+
+  /* Folder list */
+  .folder-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 12px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .folder-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 12px;
+    border-radius: 12px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s;
+    border: none;
+    background: none;
+    color: var(--text);
+    width: 100%;
+    text-align: left;
+    font-family: var(--font-sans);
+    font-size: 15px;
+  }
+
+  .folder-item:active { background: var(--surface-hover); }
+
+  .folder-icon {
+    width: 40px;
+    height: 40px;
+    background: var(--accent-glow);
+    border: 1px solid rgba(16, 163, 127, 0.12);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .folder-icon svg {
+    width: 20px;
+    height: 20px;
+    stroke: var(--accent);
+    fill: none;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .folder-name {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .folder-chevron {
+    margin-left: auto;
+    color: var(--text-dim);
+    font-size: 18px;
+    opacity: 0.5;
+    flex-shrink: 0;
+  }
+
+  .folder-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  .folder-loading {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  /* Select button */
+  .modal-footer {
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    flex-shrink: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .select-btn {
+    width: 100%;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    padding: 16px;
+    font-family: var(--font-sans);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: all 0.2s;
+  }
+
+  .select-btn:hover { background: var(--accent-hover); }
+
+  .select-btn:active {
+    transform: scale(0.98);
+    opacity: 0.9;
+  }
+
+  .select-path {
+    display: block;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    font-weight: 400;
+    opacity: 0.7;
+    margin-top: 4px;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    margin-top: 36px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-dim);
+    opacity: 0.4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .footer-badge {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Animations ── */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .card, .form-section { animation: fadeIn 0.3s ease-out backwards; }
+  .card:nth-child(1) { animation-delay: 0.05s; }
+  .card:nth-child(2) { animation-delay: 0.1s; }
+  .card:nth-child(3) { animation-delay: 0.15s; }
+  .card:nth-child(4) { animation-delay: 0.2s; }
+  .form-section { animation-delay: 0.25s; }
+
+  /* ── Capture section ── */
+  .capture-section {
+    margin-top: 28px;
+    padding-top: 28px;
+    border-top: 1px solid var(--border);
+  }
+
+  .capture-card {
+    background: var(--surface);
+    border: 1px dashed rgba(16, 163, 127, 0.35);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .capture-card:active {
+    transform: scale(0.98);
+    background: var(--surface-hover);
+  }
+
+  .capture-card .card-link {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    text-decoration: none;
+    color: inherit;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+    min-width: 0;
+  }
+
+  .capture-card .card-left {
+    min-width: 0;
+  }
+
+  .capture-card .card-left > div {
+    min-width: 0;
+  }
+
+  .capture-card .card-meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .capture-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--accent);
+    box-shadow: 0 0 8px rgba(16, 163, 127, 0.4);
+  }
+
+  .capture-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    background: var(--accent-glow);
+    color: var(--accent);
+    border: 1px solid rgba(16, 163, 127, 0.2);
+  }
+
+  /* ── Desktop responsive ── */
+  @media (min-width: 768px) {
+    body { padding-left: 24px; padding-right: 24px; }
+    .header { padding-top: 48px; }
+    .card { transition: all 0.15s ease; }
+    .card:hover { background: var(--surface-hover); border-color: rgba(16, 163, 127, 0.2); }
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <span class="logo">
+      <span class="logo-prompt">&gt;_ </span><span class="logo-text">codex remote hub</span><span class="logo-cursor"></span>
+    </span>
+    <span class="counter">{{COUNT_TEXT}}</span>
+  </div>
+  <p class="subtitle">Codex CLI Sessions</p>
+
+  <div class="sessions-list">
+    {{SESSION_CARDS}}
+  </div>
+
+  <!-- Capturable Sessions -->
+  <div class="capture-section" id="capture-section" style="display:none;">
+    <label class="form-label">Running Sessions</label>
+    <div class="sessions-list" id="capturable-list"></div>
+  </div>
+
+  <div class="form-section">
+    <label class="form-label">New Session</label>
+    <div class="form-row">
+      <input class="form-input" id="session-name" placeholder="session name" autocapitalize="none" autocorrect="off" spellcheck="false">
+      <button class="form-btn" onclick="openFolderPicker()">Create</button>
+    </div>
+  </div>
+
+  <div class="footer">
+    Codex Remote Hub v{{VERSION}}
+    <span class="footer-badge">ttyd + tmux</span>
+  </div>
+
+  <!-- Folder Picker Modal -->
+  <div class="modal-overlay" id="folder-modal">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <span class="modal-title">Choose directory</span>
+        <button class="modal-close" onclick="closeFolderPicker()">&times;</button>
+      </div>
+      <div class="breadcrumb" id="breadcrumb"></div>
+      <div class="folder-list" id="folder-list">
+        <div class="folder-loading">Loading...</div>
+      </div>
+      <div class="modal-footer">
+        <button class="select-btn" id="select-btn" onclick="confirmSelection()">
+          Open session here
+          <span class="select-path" id="select-path"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Permission Mode Popup -->
+  <div class="modal-overlay" id="skip-modal">
+    <div class="modal" style="max-height:auto;">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <span class="modal-title">Permission mode</span>
+        <button class="modal-close" onclick="closeSkipModal()">&times;</button>
+      </div>
+      <div style="padding:16px 20px;">
+        <div style="background:var(--danger-bg);border:1px solid rgba(229,69,69,0.2);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px;">
+          <div style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--danger);margin-bottom:6px;">--dangerously-bypass-approvals-and-sandbox</div>
+          <div style="font-size:13px;color:var(--text-dim);line-height:1.5;">
+            Codex will be able to execute commands, edit, and delete files <strong style="color:var(--danger);">without asking for confirmation</strong>. Only use this for projects you fully trust.
+          </div>
+        </div>
+        <button class="select-btn" style="background:var(--danger);margin-bottom:10px;" onclick="launchSession(true)">
+          Yes, skip permissions
+        </button>
+        <button class="select-btn" style="background:var(--accent);" onclick="launchSession(false)">
+          No, normal mode
+        </button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  let currentPath = '';
+  let currentAbsolute = '';
+  let sessionName = '';
+
+  function openFolderPicker(name) {
+    const input = document.getElementById('session-name');
+    sessionName = name || input.value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    if (!sessionName) {
+      input.focus();
+      input.style.borderColor = 'var(--danger)';
+      setTimeout(function() { input.style.borderColor = ''; }, 1500);
+      return;
+    }
+    document.getElementById('folder-modal').classList.add('active');
+    currentPath = '';
+    loadFolders('');
+  }
+
+  function closeFolderPicker() {
+    document.getElementById('folder-modal').classList.remove('active');
+  }
+
+  document.getElementById('folder-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeFolderPicker();
+  });
+
+  async function loadFolders(path) {
+    var list = document.getElementById('folder-list');
+    list.textContent = '';
+    var loadingDiv = document.createElement('div');
+    loadingDiv.className = 'folder-loading';
+    loadingDiv.textContent = 'Loading...';
+    list.appendChild(loadingDiv);
+
+    try {
+      var res = await fetch('/api/folders?path=' + encodeURIComponent(path));
+      var data = await res.json();
+      currentPath = data.current;
+      currentAbsolute = data.absolute;
+
+      renderBreadcrumb(data);
+
+      var pathDisplay = data.current ? data.root_name + '/' + data.current : data.root_name;
+      document.getElementById('select-path').textContent = '~/' + pathDisplay;
+
+      if (data.folders.length === 0) {
+        list.textContent = '';
+        var emptyDiv = document.createElement('div');
+        emptyDiv.className = 'folder-empty';
+        emptyDiv.textContent = 'No subdirectories here';
+        list.appendChild(emptyDiv);
+        return;
+      }
+
+      list.textContent = '';
+      data.folders.forEach(function(name) {
+        var item = document.createElement('button');
+        item.className = 'folder-item';
+
+        var icon = document.createElement('span');
+        icon.className = 'folder-icon';
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        var pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        pathEl.setAttribute('d', 'M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z');
+        svg.appendChild(pathEl);
+        icon.appendChild(svg);
+
+        var nameSpan = document.createElement('span');
+        nameSpan.className = 'folder-name';
+        nameSpan.textContent = name;
+
+        var chevron = document.createElement('span');
+        chevron.className = 'folder-chevron';
+        chevron.textContent = '\u203A';
+
+        item.appendChild(icon);
+        item.appendChild(nameSpan);
+        item.appendChild(chevron);
+
+        item.onclick = function() {
+          var newPath = data.current ? data.current + '/' + name : name;
+          loadFolders(newPath);
+        };
+        list.appendChild(item);
+      });
+
+      list.scrollTop = 0;
+    } catch (err) {
+      list.textContent = '';
+      var errDiv = document.createElement('div');
+      errDiv.className = 'folder-empty';
+      errDiv.textContent = 'Failed to load directories';
+      list.appendChild(errDiv);
+    }
+  }
+
+  function renderBreadcrumb(data) {
+    var bc = document.getElementById('breadcrumb');
+    bc.textContent = '';
+
+    var rootBtn = document.createElement('button');
+    rootBtn.className = 'crumb' + (data.current === '' ? ' current' : '');
+    rootBtn.textContent = data.root_name;
+    rootBtn.onclick = function() { loadFolders(''); };
+    bc.appendChild(rootBtn);
+
+    if (data.current) {
+      var parts = data.current.split('/');
+      var accumulated = '';
+      parts.forEach(function(part, i) {
+        var sep = document.createElement('span');
+        sep.className = 'crumb-sep';
+        sep.textContent = '/';
+        bc.appendChild(sep);
+
+        accumulated += (accumulated ? '/' : '') + part;
+        var btn = document.createElement('button');
+        btn.className = 'crumb' + (i === parts.length - 1 ? ' current' : '');
+        btn.textContent = part;
+        var pathForBtn = accumulated;
+        btn.onclick = function() { loadFolders(pathForBtn); };
+        bc.appendChild(btn);
+      });
+    }
+  }
+
+  function confirmSelection() {
+    document.getElementById('folder-modal').classList.remove('active');
+    document.getElementById('skip-modal').classList.add('active');
+  }
+
+  function closeSkipModal() {
+    document.getElementById('skip-modal').classList.remove('active');
+  }
+
+  document.getElementById('skip-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeSkipModal();
+  });
+
+  function launchSession(skip) {
+    var dir = encodeURIComponent(currentAbsolute);
+    var name = encodeURIComponent(sessionName);
+    var url = '/start/' + name + '?dir=' + dir;
+    if (skip) url += '&skip_permissions=1';
+    window.location.href = url;
+  }
+
+  // ── Capturable Sessions ──
+  var captureTarget = null;
+
+  async function loadCapturable() {
+    try {
+      var res = await fetch('/api/capturable');
+      var sessions = await res.json();
+      var section = document.getElementById('capture-section');
+      var list = document.getElementById('capturable-list');
+
+      if (!sessions || sessions.length === 0) {
+        section.style.display = 'none';
+        return;
+      }
+
+      section.style.display = '';
+      list.textContent = '';
+
+      sessions.forEach(function(s) {
+        var card = document.createElement('div');
+        card.className = 'capture-card';
+        card.style.animation = 'fadeIn 0.3s ease-out backwards';
+
+        var link = document.createElement('a');
+        link.className = 'card-link';
+        link.href = '#';
+        link.onclick = function(e) {
+          e.preventDefault();
+          captureTarget = s;
+          document.getElementById('skip-modal').classList.add('active');
+        };
+
+        var left = document.createElement('div');
+        left.className = 'card-left';
+
+        var dot = document.createElement('span');
+        dot.className = 'capture-dot';
+
+        var info = document.createElement('div');
+
+        var nameDiv = document.createElement('div');
+        nameDiv.className = 'card-name';
+        nameDiv.textContent = s.project_name;
+
+        var metaDiv = document.createElement('div');
+        metaDiv.className = 'card-meta';
+        var shortCwd = s.cwd.replace(/^\/Users\/[^/]+/, '~');
+        if (shortCwd.length > 30) {
+          shortCwd = shortCwd.slice(0, 12) + '\u2026' + shortCwd.slice(-15);
+        }
+        metaDiv.textContent = 'PID ' + s.pid + ' \u00b7 ' + shortCwd;
+
+        info.appendChild(nameDiv);
+        info.appendChild(metaDiv);
+        left.appendChild(dot);
+        left.appendChild(info);
+
+        var right = document.createElement('div');
+        right.className = 'card-right';
+
+        var badge = document.createElement('span');
+        badge.className = 'capture-badge';
+        badge.textContent = 'capture';
+
+        var arrow = document.createElement('span');
+        arrow.className = 'arrow';
+        arrow.textContent = '\u203A';
+
+        right.appendChild(badge);
+        right.appendChild(arrow);
+
+        link.appendChild(left);
+        link.appendChild(right);
+        card.appendChild(link);
+        list.appendChild(card);
+      });
+    } catch(e) {
+      // silently fail
+    }
+  }
+
+  // Override launchSession to handle capture mode
+  var _originalLaunchSession = launchSession;
+  launchSession = function(skip) {
+    if (captureTarget) {
+      var s = captureTarget;
+      captureTarget = null;
+      var url = '/capture?pid=' + s.pid
+        + '&cwd=' + encodeURIComponent(s.cwd)
+        + '&name=' + encodeURIComponent(s.project_name)
+        + (s.session_id ? '&session_id=' + encodeURIComponent(s.session_id) : '');
+      if (skip) url += '&skip_permissions=1';
+      window.location.href = url;
+      return;
+    }
+    _originalLaunchSession(skip);
+  };
+
+  // Also reset captureTarget when skip-modal is closed
+  var _originalCloseSkipModal = closeSkipModal;
+  closeSkipModal = function() {
+    captureTarget = null;
+    _originalCloseSkipModal();
+  };
+
+  loadCapturable();
+</script>
+</body>
+</html>

@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0f">
+<title>{{SESSION_NAME}} — Codex Remote Hub</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #13131a;
+    --surface-hover: #1a1a24;
+    --border: #252530;
+    --text: #e4e2db;
+    --text-dim: #6b6a65;
+    --accent: #10a37f;
+    --danger: #e54545;
+    --success: #4ade80;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    padding-top: env(safe-area-inset-top);
+  }
+
+  /* ── Top bar ── */
+  .top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    gap: 6px;
+  }
+
+  .top-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .back-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 24px;
+    padding: 4px 8px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    flex-shrink: 0;
+  }
+
+  .session-name {
+    font-family: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .zoom-btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .zoom-btn:active {
+    background: var(--surface-hover);
+  }
+
+  .zoom-level {
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    min-width: 32px;
+    text-align: center;
+  }
+
+  /* ── Terminal iframe ── */
+  .terminal-wrap {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    background: var(--bg);
+  }
+
+  .terminal-wrap iframe {
+    display: block;
+    border: none;
+    background: var(--bg);
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    z-index: 10;
+    transition: opacity 0.3s;
+  }
+
+  .loading-overlay.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .loading-text {
+    color: var(--text-dim);
+    font-size: 13px;
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+  }
+
+  .direct-link {
+    margin-top: 12px;
+    padding: 12px 24px;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 10px;
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .direct-link:active {
+    opacity: 0.8;
+    transform: scale(0.96);
+  }
+
+  /* ── Virtual keyboard ── */
+  .vk-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .vk-row {
+    display: flex;
+    gap: 5px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .vk-row::-webkit-scrollbar { display: none; }
+
+  .vk-btn {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 9px 11px;
+    border-radius: 8px;
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+    transition: all 0.1s;
+    flex-shrink: 0;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .vk-btn:active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    transform: scale(0.93);
+  }
+
+  .vk-btn.danger {
+    color: var(--danger);
+    border-color: rgba(229, 69, 69, 0.3);
+  }
+
+  .vk-btn.danger:active {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: #fff;
+  }
+
+  .vk-btn.special {
+    color: var(--success);
+    border-color: rgba(74, 222, 128, 0.3);
+  }
+
+  .vk-btn.special:active {
+    background: var(--success);
+    border-color: var(--success);
+    color: #fff;
+  }
+
+  .vk-sep {
+    width: 1px;
+    background: var(--border);
+    flex-shrink: 0;
+    margin: 4px 2px;
+  }
+
+  /* ── Toast feedback ── */
+  .toast {
+    position: fixed;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 16px;
+    border-radius: 10px;
+    font-family: 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px;
+    opacity: 0;
+    transition: all 0.2s;
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ── Desktop: hide virtual keyboard ── */
+  @media (hover: hover) and (pointer: fine) {
+    .vk-bar { display: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="top-bar">
+      <div class="top-left">
+        <button class="back-btn" onclick="location.href='/'">&#8249;</button>
+        <span class="session-name">{{SESSION_NAME}}</span>
+      </div>
+    </div>
+
+    <div class="terminal-wrap" id="terminal-wrap">
+      <div class="loading-overlay" id="loading">
+        <div class="spinner"></div>
+        <div class="loading-text">Connecting to terminal...</div>
+        <a class="direct-link" id="direct-link" style="display:none">Open terminal directly</a>
+      </div>
+      <iframe id="terminal" allow="clipboard-read; clipboard-write"></iframe>
+    </div>
+
+    <div class="vk-bar" id="vk-bar">
+      <div class="vk-row">
+        <button class="vk-btn" onclick="sk('Escape')">Esc</button>
+        <button class="vk-btn special" onclick="scrollTmux('up')">PgUp</button>
+        <button class="vk-btn special" onclick="scrollTmux('down')">PgDn</button>
+        <button class="vk-btn" onclick="sk('BTab')">&#8679;Tab</button>
+        <div class="vk-sep"></div>
+        <button class="vk-btn special" onclick="sk('Enter')">&#9166;</button>
+        <button class="vk-btn" onclick="sk('Up')">&#9650;</button>
+        <button class="vk-btn" onclick="sk('Down')">&#9660;</button>
+        <button class="vk-btn" onclick="sk('Left')">&#9664;</button>
+        <button class="vk-btn" onclick="sk('Right')">&#9654;</button>
+      </div>
+      <div class="vk-row">
+        <button class="vk-btn" onclick="sendText('/')">/</button>
+        <button class="vk-btn" onclick="sk('Tab')">Tab</button>
+        <button class="vk-btn danger" onclick="sk('C-c')">^C</button>
+        <button class="vk-btn" onclick="sk('C-z')">^Z</button>
+        <button class="vk-btn" onclick="sk('C-d')">^D</button>
+        <button class="vk-btn" onclick="sk('C-l')">^L</button>
+        <button class="vk-btn" onclick="sk('C-a')">^A</button>
+        <button class="vk-btn" onclick="sk('C-e')">^E</button>
+        <button class="vk-btn" onclick="sk('C-r')">^R</button>
+        <button class="vk-btn" onclick="sk('C-u')">^U</button>
+        <button class="vk-btn" onclick="sk('C-k')">^K</button>
+        <button class="vk-btn" onclick="sk('C-w')">^W</button>
+        <div class="vk-sep"></div>
+        <button class="vk-btn special" onclick="pasteClipboard()">Paste</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+  var SESSION = "{{SESSION_NAME}}";
+  var TERMINAL_URL = "{{TERMINAL_URL}}";
+
+  var iframe = document.getElementById('terminal');
+  var loading = document.getElementById('loading');
+  var loadingText = loading.querySelector('.loading-text');
+  var directLink = document.getElementById('direct-link');
+
+  directLink.href = TERMINAL_URL;
+
+  // Mobile detection: iOS needs direct redirect (Safari blocks WS cross-origin in iframes)
+  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  async function connectTerminal() {
+    loading.classList.remove('hidden');
+    loadingText.textContent = 'Connecting to terminal...';
+    var attempts = 0;
+    while (true) {
+      try {
+        var r = await fetch('/api/ttyd-ready/' + encodeURIComponent(SESSION));
+        var data = await r.json();
+        if (data.ready) break;
+      } catch(e) {}
+      attempts++;
+      if (attempts > 3) loadingText.textContent = 'Waiting for terminal...';
+      await new Promise(function(ok) { setTimeout(ok, 300); });
+    }
+    if (isIOS) {
+      // iOS Safari blocks WebSocket cross-origin in iframes.
+      // Redirect directly to ttyd URL (same-origin = WS works).
+      try {
+        localStorage.setItem('codexRemoteHub_origin', location.origin);
+        localStorage.setItem('codexRemoteHub_session', SESSION);
+      } catch(e) {}
+      window.location.replace(TERMINAL_URL + '#hub=' + encodeURIComponent(location.origin) + '&session=' + encodeURIComponent(SESSION));
+      return;
+    }
+    // Android Chrome and desktop browsers: use iframe
+    iframe.src = TERMINAL_URL;
+    iframe.onload = function() { loading.classList.add('hidden'); };
+    setTimeout(function() { loading.classList.add('hidden'); }, 3000);
+  }
+
+  connectTerminal();
+
+  // Browsers may kill WebSocket when tab goes to background — only reconnect if needed
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState !== 'visible' || !iframe.src) return;
+    // Check if ttyd is still reachable before forcing a reload
+    fetch('/api/ttyd-ready/' + encodeURIComponent(SESSION))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.ready) {
+          reloadTerminal();
+        }
+      })
+      .catch(function() {
+        reloadTerminal();
+      });
+  });
+
+  function reloadTerminal() {
+    var src = iframe.src;
+    iframe.src = '';
+    loading.classList.remove('hidden');
+    loadingText.textContent = 'Reconnecting...';
+    setTimeout(function() {
+      iframe.src = src;
+      iframe.onload = function() { loading.classList.add('hidden'); };
+      setTimeout(function() { loading.classList.add('hidden'); }, 2000);
+    }, 100);
+  }
+
+  function showToast(msg) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(function() { t.classList.remove('show'); }, 800);
+  }
+
+  async function sk(key) {
+    try {
+      var res = await fetch('/api/send-keys/' + encodeURIComponent(SESSION), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: key })
+      });
+      if (!res.ok) showToast('Failed to send key');
+    } catch(e) {
+      showToast('Connection failed');
+    }
+  }
+
+  async function sendText(text) {
+    try {
+      var res = await fetch('/api/send-text/' + encodeURIComponent(SESSION), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text })
+      });
+      if (!res.ok) showToast('Failed to send text');
+    } catch(e) {
+      showToast('Connection failed');
+    }
+  }
+
+  async function pasteClipboard() {
+    try {
+      var text = await navigator.clipboard.readText();
+      if (!text) { showToast('Clipboard empty'); return; }
+      var res = await fetch('/api/send-text/' + encodeURIComponent(SESSION), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text })
+      });
+      if (res.ok) {
+        showToast('Pasted!');
+      } else {
+        showToast('Failed to paste');
+      }
+    } catch(e) {
+      showToast('No clipboard access');
+    }
+  }
+
+  async function scrollTmux(dir) {
+    try {
+      await fetch('/api/scroll/' + encodeURIComponent(SESSION), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction: dir })
+      });
+    } catch(e) {
+      showToast('Scroll error');
+    }
+  }
+</script>
+</body>
+</html>
