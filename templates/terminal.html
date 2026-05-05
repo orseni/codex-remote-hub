@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0a0a0f">
-<title>{{SESSION_NAME}} — Codex Remote Hub</title>
+<title>{{SESSION_NAME_HTML}} — Codex Remote Hub</title>
 <style>
   :root {
     --bg: #0a0a0f;
@@ -33,10 +33,12 @@
   }
 
   .container {
+    --crh-keyboard-inset: 0px;
     display: flex;
     flex-direction: column;
     height: 100dvh;
     padding-top: env(safe-area-inset-top);
+    box-sizing: border-box;
   }
 
   /* ── Top bar ── */
@@ -199,6 +201,14 @@
     flex-shrink: 0;
   }
 
+  .container.native-keyboard .vk-bar {
+    display: none;
+  }
+
+  .container.native-keyboard {
+    padding-bottom: var(--crh-keyboard-inset);
+  }
+
   .vk-row {
     display: flex;
     gap: 5px;
@@ -291,70 +301,144 @@
   @media (hover: hover) and (pointer: fine) {
     .vk-bar { display: none; }
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 </style>
 </head>
 <body>
   <div class="container">
     <div class="top-bar">
       <div class="top-left">
-        <button class="back-btn" onclick="location.href='/'">&#8249;</button>
-        <span class="session-name">{{SESSION_NAME}}</span>
+        <button class="back-btn" type="button" aria-label="Back to dashboard" onclick="location.href='/'">&#8249;</button>
+        <span class="session-name">{{SESSION_NAME_HTML}}</span>
       </div>
     </div>
 
     <div class="terminal-wrap" id="terminal-wrap">
       <div class="loading-overlay" id="loading">
         <div class="spinner"></div>
-        <div class="loading-text">Connecting to terminal...</div>
+        <div class="loading-text" aria-live="polite">Connecting to terminal...</div>
         <a class="direct-link" id="direct-link" style="display:none">Open terminal directly</a>
       </div>
-      <iframe id="terminal" allow="clipboard-read; clipboard-write"></iframe>
+      <iframe id="terminal" title="Codex terminal" allow="clipboard-read; clipboard-write"></iframe>
     </div>
 
     <div class="vk-bar" id="vk-bar">
       <div class="vk-row">
-        <button class="vk-btn" onclick="sk('Escape')">Esc</button>
-        <button class="vk-btn special" onclick="scrollTmux('up')">PgUp</button>
-        <button class="vk-btn special" onclick="scrollTmux('down')">PgDn</button>
-        <button class="vk-btn" onclick="sk('BTab')">&#8679;Tab</button>
+        <button class="vk-btn" type="button" onclick="sk('Escape')">Esc</button>
+        <button class="vk-btn special" type="button" onclick="scrollTmux('up')">PgUp</button>
+        <button class="vk-btn special" type="button" onclick="scrollTmux('down')">PgDn</button>
+        <button class="vk-btn" type="button" aria-label="Shift Tab" onclick="sk('BTab')">&#8679;Tab</button>
         <div class="vk-sep"></div>
-        <button class="vk-btn special" onclick="sk('Enter')">&#9166;</button>
-        <button class="vk-btn" onclick="sk('Up')">&#9650;</button>
-        <button class="vk-btn" onclick="sk('Down')">&#9660;</button>
-        <button class="vk-btn" onclick="sk('Left')">&#9664;</button>
-        <button class="vk-btn" onclick="sk('Right')">&#9654;</button>
+        <button class="vk-btn special" type="button" aria-label="Enter" onclick="sk('Enter')">&#9166;</button>
+        <button class="vk-btn" type="button" aria-label="Arrow up" onclick="sk('Up')">&#9650;</button>
+        <button class="vk-btn" type="button" aria-label="Arrow down" onclick="sk('Down')">&#9660;</button>
+        <button class="vk-btn" type="button" aria-label="Arrow left" onclick="sk('Left')">&#9664;</button>
+        <button class="vk-btn" type="button" aria-label="Arrow right" onclick="sk('Right')">&#9654;</button>
       </div>
       <div class="vk-row">
-        <button class="vk-btn" onclick="sendText('/')">/</button>
-        <button class="vk-btn" onclick="sk('Tab')">Tab</button>
-        <button class="vk-btn danger" onclick="sk('C-c')">^C</button>
-        <button class="vk-btn" onclick="sk('C-z')">^Z</button>
-        <button class="vk-btn" onclick="sk('C-d')">^D</button>
-        <button class="vk-btn" onclick="sk('C-l')">^L</button>
-        <button class="vk-btn" onclick="sk('C-a')">^A</button>
-        <button class="vk-btn" onclick="sk('C-e')">^E</button>
-        <button class="vk-btn" onclick="sk('C-r')">^R</button>
-        <button class="vk-btn" onclick="sk('C-u')">^U</button>
-        <button class="vk-btn" onclick="sk('C-k')">^K</button>
-        <button class="vk-btn" onclick="sk('C-w')">^W</button>
+        <button class="vk-btn" type="button" onclick="sendText('/')">/</button>
+        <button class="vk-btn" type="button" onclick="sk('Tab')">Tab</button>
+        <button class="vk-btn danger" type="button" onclick="sk('C-c')">^C</button>
+        <button class="vk-btn" type="button" onclick="sk('C-z')">^Z</button>
+        <button class="vk-btn" type="button" onclick="sk('C-d')">^D</button>
+        <button class="vk-btn" type="button" onclick="sk('C-l')">^L</button>
+        <button class="vk-btn" type="button" onclick="sk('C-a')">^A</button>
+        <button class="vk-btn" type="button" onclick="sk('C-e')">^E</button>
+        <button class="vk-btn" type="button" onclick="sk('C-r')">^R</button>
+        <button class="vk-btn" type="button" onclick="sk('C-u')">^U</button>
+        <button class="vk-btn" type="button" onclick="sk('C-k')">^K</button>
+        <button class="vk-btn" type="button" onclick="sk('C-w')">^W</button>
         <div class="vk-sep"></div>
-        <button class="vk-btn special" onclick="pasteClipboard()">Paste</button>
+        <button class="vk-btn special" type="button" onclick="pasteClipboard()">Paste</button>
       </div>
     </div>
   </div>
 
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" aria-live="polite"></div>
 
 <script>
-  var SESSION = "{{SESSION_NAME}}";
-  var TERMINAL_URL = "{{TERMINAL_URL}}";
+  var SESSION = {{SESSION_NAME_JSON}};
+  var TERMINAL_URL = {{TERMINAL_URL_JSON}};
+  var CSRF_TOKEN = {{CSRF_TOKEN}};
 
   var iframe = document.getElementById('terminal');
   var loading = document.getElementById('loading');
   var loadingText = loading.querySelector('.loading-text');
   var directLink = document.getElementById('direct-link');
+  var container = document.querySelector('.container');
+  var keyboardFallbackUntil = 0;
 
-  directLink.href = TERMINAL_URL;
+  function terminalUrlWithHubParams() {
+    return TERMINAL_URL
+      + '#hub=' + encodeURIComponent(location.origin)
+      + '&session=' + encodeURIComponent(SESSION)
+      + '&csrf=' + encodeURIComponent(CSRF_TOKEN);
+  }
+
+  directLink.href = terminalUrlWithHubParams();
+
+  function csrfHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': CSRF_TOKEN
+    };
+  }
+
+  function updateVisualViewport() {
+    var vv = window.visualViewport;
+    var vvHeight = vv ? vv.height : 0;
+    var layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, vvHeight || 0);
+    var offsetTop = vv ? (vv.offsetTop || 0) : 0;
+    var viewportInset = vv ? Math.max(0, layoutHeight - vvHeight - offsetTop) : 0;
+    var inset = Math.max(viewportInset, virtualKeyboardInset());
+    var fallbackActive = touchDevice() && Date.now() < keyboardFallbackUntil;
+    var keyboardOpen = inset > 80 || fallbackActive;
+    if (keyboardOpen && inset < 120) {
+      inset = Math.round(layoutHeight * 0.42);
+    }
+    if (layoutHeight > 0) {
+      inset = Math.min(inset, Math.round(layoutHeight * 0.65));
+    }
+    container.style.setProperty('--crh-keyboard-inset', keyboardOpen ? Math.round(inset) + 'px' : '0px');
+    container.classList.toggle('native-keyboard', keyboardOpen);
+  }
+
+  function touchDevice() {
+    return window.matchMedia && window.matchMedia('(hover: none), (pointer: coarse)').matches;
+  }
+
+  function virtualKeyboardInset() {
+    try {
+      if (navigator.virtualKeyboard && navigator.virtualKeyboard.boundingRect) {
+        return Math.max(0, navigator.virtualKeyboard.boundingRect.height || 0);
+      }
+    } catch(e) {}
+    return 0;
+  }
+
+  try {
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', updateVisualViewport);
+      window.visualViewport.addEventListener('scroll', updateVisualViewport);
+    }
+    if (navigator.virtualKeyboard) {
+      navigator.virtualKeyboard.addEventListener('geometrychange', updateVisualViewport);
+    }
+    window.addEventListener('orientationchange', function() { setTimeout(updateVisualViewport, 300); });
+    document.addEventListener('focusout', function() {
+      keyboardFallbackUntil = 0;
+      setTimeout(updateVisualViewport, 120);
+    }, true);
+    setTimeout(updateVisualViewport, 100);
+  } catch(e) {}
 
   // Mobile detection: iOS needs direct redirect (Safari blocks WS cross-origin in iframes)
   var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -364,7 +448,8 @@
     loading.classList.remove('hidden');
     loadingText.textContent = 'Connecting to terminal...';
     var attempts = 0;
-    while (true) {
+    var maxAttempts = 80;
+    while (attempts < maxAttempts) {
       try {
         var r = await fetch('/api/ttyd-ready/' + encodeURIComponent(SESSION));
         var data = await r.json();
@@ -372,7 +457,13 @@
       } catch(e) {}
       attempts++;
       if (attempts > 3) loadingText.textContent = 'Waiting for terminal...';
+      if (attempts > 12) directLink.style.display = '';
       await new Promise(function(ok) { setTimeout(ok, 300); });
+    }
+    if (attempts >= maxAttempts) {
+      loadingText.textContent = 'Terminal did not become ready.';
+      directLink.style.display = '';
+      return;
     }
     if (isIOS) {
       // iOS Safari blocks WebSocket cross-origin in iframes.
@@ -380,12 +471,13 @@
       try {
         localStorage.setItem('codexRemoteHub_origin', location.origin);
         localStorage.setItem('codexRemoteHub_session', SESSION);
+        localStorage.setItem('codexRemoteHub_csrf', CSRF_TOKEN);
       } catch(e) {}
-      window.location.replace(TERMINAL_URL + '#hub=' + encodeURIComponent(location.origin) + '&session=' + encodeURIComponent(SESSION));
+      window.location.replace(terminalUrlWithHubParams());
       return;
     }
     // Android Chrome and desktop browsers: use iframe
-    iframe.src = TERMINAL_URL;
+    iframe.src = terminalUrlWithHubParams();
     iframe.onload = function() { loading.classList.add('hidden'); };
     setTimeout(function() { loading.classList.add('hidden'); }, 3000);
   }
@@ -431,7 +523,7 @@
     try {
       var res = await fetch('/api/send-keys/' + encodeURIComponent(SESSION), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: csrfHeaders(),
         body: JSON.stringify({ key: key })
       });
       if (!res.ok) showToast('Failed to send key');
@@ -444,7 +536,7 @@
     try {
       var res = await fetch('/api/send-text/' + encodeURIComponent(SESSION), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: csrfHeaders(),
         body: JSON.stringify({ text: text })
       });
       if (!res.ok) showToast('Failed to send text');
@@ -459,7 +551,7 @@
       if (!text) { showToast('Clipboard empty'); return; }
       var res = await fetch('/api/send-text/' + encodeURIComponent(SESSION), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: csrfHeaders(),
         body: JSON.stringify({ text: text })
       });
       if (res.ok) {
@@ -476,7 +568,7 @@
     try {
       await fetch('/api/scroll/' + encodeURIComponent(SESSION), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: csrfHeaders(),
         body: JSON.stringify({ direction: dir })
       });
     } catch(e) {

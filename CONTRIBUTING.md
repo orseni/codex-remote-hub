@@ -93,7 +93,14 @@ Keep the subject line under 72 characters. Add a body for complex changes.
 
 ## Testing
 
-There is no automated test suite yet (contributions welcome! See [ROADMAP.md](ROADMAP.md)).
+Run the automated checks before submitting a PR:
+
+```bash
+python -m py_compile codex-remote-hub.py
+bash -n install.sh
+python -m unittest discover -s tests
+ruff check .
+```
 
 ### Manual Testing Checklist
 

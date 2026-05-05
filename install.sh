@@ -77,7 +77,7 @@ do_uninstall() {
     fi
 
     # Kill ttyd processes
-    pkill -f "ttyd.*-p 77" 2>/dev/null || true
+    pkill -f "ttyd.*-p 78" 2>/dev/null || true
 
     # Remove files
     rm -rf "$INSTALL_DIR"
@@ -223,6 +223,12 @@ cp "$SRC_DIR/templates/"*.html "$INSTALL_DIR/templates/" 2>/dev/null
 # Copy icon if available
 if [ -f "$SRC_DIR/icon_cxhub.png" ]; then
     cp "$SRC_DIR/icon_cxhub.png" "$INSTALL_DIR/icon_cxhub.png"
+fi
+
+# Copy optional maintenance tools
+if [ -f "$SRC_DIR/tools/patch_ttyd_index.py" ]; then
+    mkdir -p "$INSTALL_DIR/tools"
+    cp "$SRC_DIR/tools/patch_ttyd_index.py" "$INSTALL_DIR/tools/patch_ttyd_index.py"
 fi
 
 ok "Server + templates installed to $INSTALL_DIR"
@@ -451,7 +457,7 @@ case "${1:-status}" in
                 fi
                 ;;
         esac
-        pkill -f "ttyd.*-p 77" 2>/dev/null
+        pkill -f "ttyd.*-p 78" 2>/dev/null
         echo "  Codex Remote Hub stopped"
         ;;
     restart)

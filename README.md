@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-10a37f?style=flat-square" alt="v1.0.0">
+  <img src="https://img.shields.io/badge/version-1.1.0-10a37f?style=flat-square" alt="v1.1.0">
   <img src="https://img.shields.io/badge/python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/macOS-supported-000?style=flat-square&logo=apple&logoColor=white" alt="macOS">
   <img src="https://img.shields.io/badge/Linux-supported-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
@@ -43,7 +43,7 @@ Whether you're reviewing a PR on the couch, fixing a bug from a coffee shop, or 
 │    Phone /   │                              │    Your Computer              │
 │    Tablet /  │ ◄── Tailscale (mesh VPN) ──► │                               │
 │    Browser   │     encrypted tunnel         │  :7690  Codex Remote Hub (web) │
-└──────────────┘                              │  :77xx  ttyd → tmux           │
+└──────────────┘                              │  :78xx  ttyd → tmux           │
                                               │              └─ codex         │
                                               └───────────────────────────────┘
 ```
@@ -195,6 +195,8 @@ All settings are optional environment variables:
 | `CODEX_FONT_SIZE` | `11` | Terminal font size |
 | `CODEX_DEV_ROOT` | `~/Projects` | Root directory for the folder picker |
 | `CODEX_REMOTE_HUB_DIR` | `~/.codex-remote-hub` | Installation directory |
+| `CODEX_REMOTE_HUB_CSRF_TOKEN` | random at startup | Override CSRF token for state-changing API calls |
+| `CODEX_CAPTURABLE_CACHE_TTL` | `5` | Seconds to cache process discovery for capturable sessions |
 | `TTYD_BIN` | auto-detected | Path to ttyd binary |
 | `TMUX_BIN` | auto-detected | Path to tmux binary |
 | `CODEX_BIN` | auto-detected | Path to Codex CLI binary |
@@ -206,29 +208,36 @@ Set these in your shell profile (`~/.bashrc`, `~/.zshrc`) or in the service conf
 | Method | Route | Description |
 |---|---|---|
 | GET | `/` | Dashboard |
-| GET | `/start/{name}` | Create/resume a session |
 | GET | `/terminal/{name}` | Terminal wrapper page |
-| GET | `/stop/{name}` | Stop a session |
 | GET | `/api/sessions` | List sessions (JSON) |
 | GET | `/api/ttyd-ready/{name}` | Check if ttyd is ready |
 | GET | `/api/folders?path=` | Browse directories |
 | GET | `/api/capturable` | List capturable CLI sessions (JSON) |
-| GET | `/capture` | Capture a running CLI session |
 | GET | `/cert` | Download SSL certificate |
 | GET | `/icon.png` | App icon |
+| POST | `/api/start` | Create/resume a session |
+| POST | `/api/stop` | Stop a session |
+| POST | `/api/capture` | Capture a running CLI session |
 | POST | `/api/send-keys/{name}` | Send special key to terminal |
 | POST | `/api/send-text/{name}` | Send text (paste) to terminal |
+| POST | `/api/focus/{name}` | Refocus terminal and leave tmux copy-mode if needed |
 | POST | `/api/scroll/{name}` | Scroll terminal (PgUp/PgDn) |
+
+State-changing POST routes require the `X-CSRF-Token` header generated into the served dashboard/terminal pages.
 
 ## Project Structure
 
 ```
 codex-remote-hub/
-├── codex-remote-hub.py              # HTTP server (~1000 lines, stdlib only)
+├── codex-remote-hub.py        # HTTP server (stdlib only)
 ├── templates/
 │   ├── hub.html               # Dashboard (mobile-first, dark theme)
 │   └── terminal.html          # Terminal wrapper + virtual keyboard
+├── tests/                     # Unit tests for server helpers
+├── pyproject.toml             # Ruff configuration
 ├── install.sh                 # Cross-platform installer
+├── tools/
+│   └── patch_ttyd_index.py    # Patch installed ttyd UI with mobile controls
 ├── icon_cxhub.png             # App icon
 ├── LICENSE                    # MIT
 ├── CONTRIBUTING.md            # Contribution guidelines
@@ -241,7 +250,7 @@ codex-remote-hub/
 
 ```
 ~/.codex-remote-hub/
-├── codex-remote-hub.py              # Server
+├── codex-remote-hub.py        # Server
 ├── templates/                 # HTML templates
 ├── ttyd-index.html            # Custom ttyd interface (optional)
 ├── hub.crt / hub.key          # HTTPS certificates (optional)
@@ -299,7 +308,7 @@ This happens when HTTPS is not configured. iOS Safari silently blocks WebSocket 
 1. Make sure Tailscale is active on your phone
 2. Check that you can ping your computer from the Tailscale app
 3. Use HTTPS (especially required for iOS Safari)
-4. Try opening the ttyd URL directly: `https://your-machine.tailnet.ts.net:77XX`
+4. Try opening the ttyd URL directly: `https://your-machine.tailnet.ts.net:78XX`
 </details>
 
 <details>
@@ -308,7 +317,7 @@ This happens when HTTPS is not configured. iOS Safari silently blocks WebSocket 
 ```bash
 tmux list-sessions           # See all tmux sessions
 tmux kill-session -t name    # Kill a specific session
-pkill -f "ttyd.*-p 77"      # Kill orphaned ttyd processes
+pkill -f "ttyd.*-p 78"      # Kill orphaned ttyd processes
 ```
 </details>
 

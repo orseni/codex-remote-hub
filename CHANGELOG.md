@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-05-04
+
+### Added
+- CSRF-protected POST APIs for starting, stopping, capturing, and controlling sessions
+- Mobile ttyd patch tooling with native keyboard handling and touch-drag scroll fallback
+- Unit tests, Ruff configuration, and GitHub Actions CI
+
+### Changed
+- Dashboard actions now use JSON APIs instead of state-changing GET routes
+- Terminal URLs now choose HTTP/HTTPS based on installed certificates
+- Session discovery now scans nested Codex session files and resolves the real session id by project directory
+- Session ports now resolve hash collisions within the configured Codex port range
+
+### Fixed
+- Path traversal prevention now uses `commonpath` instead of prefix string matching
+- Mobile native keyboard no longer covers the terminal input area
+- Touch scroll works on mobile without trapping the terminal in tmux copy-mode
+
 ## [1.0.0] - 2026-03-04
 
 ### Added

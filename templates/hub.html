@@ -42,7 +42,6 @@
     margin: 0 auto;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    overscroll-behavior: contain;
   }
 
   /* ── Header ── */
@@ -278,6 +277,10 @@
 
   .form-input::placeholder { color: var(--text-dim); opacity: 0.5; }
   .form-input:focus { border-color: var(--accent); }
+  button:focus-visible, .form-input:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 
   .form-btn {
     background: var(--accent);
@@ -544,51 +547,52 @@
     letter-spacing: 0.5px;
   }
 
-  /* ── Pull to refresh ── */
-  .ptr {
+  /* ── Pull to Refresh ── */
+  .ptr-indicator {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    height: 64px;
     display: flex;
-    align-items: flex-end;
     justify-content: center;
     pointer-events: none;
-    transform: translateY(-100%);
-    transition: transform 0.2s ease;
-    z-index: 999;
+    z-index: 900;
+    padding-top: env(safe-area-inset-top);
   }
 
-  .ptr-inner {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+  .ptr-spinner {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
     background: var(--surface);
     border: 1px solid var(--border);
-    color: var(--text-dim);
-    padding: 8px 12px;
-    border-radius: 20px;
-    margin-bottom: 8px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform: translateY(-40px);
+    transition: transform 0.2s ease, opacity 0.2s ease;
+    opacity: 0;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
   }
 
-  .ptr-icon {
-    width: 14px;
-    height: 14px;
-    display: inline-block;
-    border: 2px solid var(--text-dim);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    transform: rotate(0deg);
+  .ptr-spinner svg {
+    width: 18px;
+    height: 18px;
+    stroke: var(--accent);
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
     transition: transform 0.15s ease;
   }
 
-  .ptr-icon.spin {
-    animation: spin 0.8s linear infinite;
+  .ptr-spinner.refreshing svg {
+    animation: ptr-spin 0.8s linear infinite;
   }
 
-  @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+  @keyframes ptr-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
 
   /* ── Animations ── */
   @keyframes fadeIn {
@@ -681,14 +685,21 @@
     .card { transition: all 0.15s ease; }
     .card:hover { background: var(--surface-hover); border-color: rgba(16, 163, 127, 0.2); }
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 </style>
 </head>
 <body>
-  <!-- Pull to Refresh indicator -->
-  <div class="ptr" id="ptr">
-    <div class="ptr-inner">
-      <span class="ptr-icon" id="ptr-icon"></span>
-      <span id="ptr-text" style="font-size:12px;">Pull to refresh</span>
+  <div class="ptr-indicator" id="ptr-indicator">
+    <div class="ptr-spinner" id="ptr-spinner">
+      <svg viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
     </div>
   </div>
   <div class="header">
@@ -710,10 +721,10 @@
   </div>
 
   <div class="form-section">
-    <label class="form-label">New Session</label>
+    <label class="form-label" for="session-name">New Session</label>
     <div class="form-row">
       <input class="form-input" id="session-name" placeholder="session name" autocapitalize="none" autocorrect="off" spellcheck="false">
-      <button class="form-btn" onclick="openFolderPicker()">Create</button>
+      <button class="form-btn" type="button" onclick="openFolderPicker()">Create</button>
     </div>
   </div>
 
@@ -723,19 +734,19 @@
   </div>
 
   <!-- Folder Picker Modal -->
-  <div class="modal-overlay" id="folder-modal">
-    <div class="modal">
+  <div class="modal-overlay" id="folder-modal" role="dialog" aria-modal="true" aria-labelledby="folder-title">
+    <div class="modal" tabindex="-1">
       <div class="modal-handle"></div>
       <div class="modal-header">
-        <span class="modal-title">Choose directory</span>
-        <button class="modal-close" onclick="closeFolderPicker()">&times;</button>
+        <span class="modal-title" id="folder-title">Choose directory</span>
+        <button class="modal-close" type="button" aria-label="Close directory picker" onclick="closeFolderPicker()">&times;</button>
       </div>
       <div class="breadcrumb" id="breadcrumb"></div>
       <div class="folder-list" id="folder-list">
         <div class="folder-loading">Loading...</div>
       </div>
       <div class="modal-footer">
-        <button class="select-btn" id="select-btn" onclick="confirmSelection()">
+        <button class="select-btn" id="select-btn" type="button" onclick="confirmSelection()">
           Open session here
           <span class="select-path" id="select-path"></span>
         </button>
@@ -744,12 +755,12 @@
   </div>
 
   <!-- Permission Mode Popup -->
-  <div class="modal-overlay" id="skip-modal">
-    <div class="modal" style="max-height:auto;">
+  <div class="modal-overlay" id="skip-modal" role="dialog" aria-modal="true" aria-labelledby="permission-title">
+    <div class="modal" style="max-height:auto;" tabindex="-1">
       <div class="modal-handle"></div>
       <div class="modal-header">
-        <span class="modal-title">Permission mode</span>
-        <button class="modal-close" onclick="closeSkipModal()">&times;</button>
+        <span class="modal-title" id="permission-title">Permission mode</span>
+        <button class="modal-close" type="button" aria-label="Close permission mode" onclick="closeSkipModal()">&times;</button>
       </div>
       <div style="padding:16px 20px;">
         <div style="background:var(--danger-bg);border:1px solid rgba(229,69,69,0.2);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px;">
@@ -758,10 +769,10 @@
             Codex will be able to execute commands, edit, and delete files <strong style="color:var(--danger);">without asking for confirmation</strong>. Only use this for projects you fully trust.
           </div>
         </div>
-        <button class="select-btn" style="background:var(--danger);margin-bottom:10px;" onclick="launchSession(true)">
+        <button class="select-btn" type="button" style="background:var(--danger);margin-bottom:10px;" onclick="launchSession(true)">
           Yes, skip permissions
         </button>
-        <button class="select-btn" style="background:var(--accent);" onclick="launchSession(false)">
+        <button class="select-btn" type="button" style="background:var(--accent);" onclick="launchSession(false)">
           No, normal mode
         </button>
       </div>
@@ -769,9 +780,34 @@
   </div>
 
 <script>
+  const CSRF_TOKEN = {{CSRF_TOKEN}};
   let currentPath = '';
   let currentAbsolute = '';
   let sessionName = '';
+
+  function csrfHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': CSRF_TOKEN
+    };
+  }
+
+  async function postJson(url, payload) {
+    var res = await fetch(url, {
+      method: 'POST',
+      headers: csrfHeaders(),
+      body: JSON.stringify(payload || {})
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok) {
+      throw new Error(data.error || 'Request failed');
+    }
+    return data;
+  }
+
+  function showError(message) {
+    alert(message);
+  }
 
   function openFolderPicker(name) {
     const input = document.getElementById('session-name');
@@ -783,6 +819,7 @@
       return;
     }
     document.getElementById('folder-modal').classList.add('active');
+    document.querySelector('#folder-modal .modal').focus();
     currentPath = '';
     loadFolders('');
   }
@@ -827,6 +864,7 @@
       data.folders.forEach(function(name) {
         var item = document.createElement('button');
         item.className = 'folder-item';
+        item.type = 'button';
 
         var icon = document.createElement('span');
         icon.className = 'folder-icon';
@@ -872,6 +910,7 @@
 
     var rootBtn = document.createElement('button');
     rootBtn.className = 'crumb' + (data.current === '' ? ' current' : '');
+    rootBtn.type = 'button';
     rootBtn.textContent = data.root_name;
     rootBtn.onclick = function() { loadFolders(''); };
     bc.appendChild(rootBtn);
@@ -888,6 +927,7 @@
         accumulated += (accumulated ? '/' : '') + part;
         var btn = document.createElement('button');
         btn.className = 'crumb' + (i === parts.length - 1 ? ' current' : '');
+        btn.type = 'button';
         btn.textContent = part;
         var pathForBtn = accumulated;
         btn.onclick = function() { loadFolders(pathForBtn); };
@@ -899,6 +939,7 @@
   function confirmSelection() {
     document.getElementById('folder-modal').classList.remove('active');
     document.getElementById('skip-modal').classList.add('active');
+    document.querySelector('#skip-modal .modal').focus();
   }
 
   function closeSkipModal() {
@@ -909,13 +950,36 @@
     if (e.target === this) closeSkipModal();
   });
 
-  function launchSession(skip) {
-    var dir = encodeURIComponent(currentAbsolute);
-    var name = encodeURIComponent(sessionName);
-    var url = '/start/' + name + '?dir=' + dir;
-    if (skip) url += '&skip_permissions=1';
-    window.location.href = url;
+  async function launchSession(skip) {
+    try {
+      var data = await postJson('/api/start', {
+        name: sessionName,
+        dir: currentAbsolute,
+        skip_permissions: skip
+      });
+      window.location.href = data.url;
+    } catch (e) {
+      showError(e.message);
+    }
   }
+
+  document.getElementById('session-name').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') openFolderPicker();
+  });
+
+  document.querySelectorAll('.stop-btn[data-session]').forEach(function(btn) {
+    btn.addEventListener('click', async function(e) {
+      e.preventDefault();
+      var name = btn.getAttribute('data-session');
+      if (!confirm('Stop session ' + name + '?')) return;
+      try {
+        await postJson('/api/stop', { name: name });
+        location.reload();
+      } catch (err) {
+        showError(err.message);
+      }
+    });
+  });
 
   // ── Capturable Sessions ──
   var captureTarget = null;
@@ -947,6 +1011,7 @@
           e.preventDefault();
           captureTarget = s;
           document.getElementById('skip-modal').classList.add('active');
+          document.querySelector('#skip-modal .modal').focus();
         };
 
         var left = document.createElement('div');
@@ -1004,12 +1069,15 @@
     if (captureTarget) {
       var s = captureTarget;
       captureTarget = null;
-      var url = '/capture?pid=' + s.pid
-        + '&cwd=' + encodeURIComponent(s.cwd)
-        + '&name=' + encodeURIComponent(s.project_name)
-        + (s.session_id ? '&session_id=' + encodeURIComponent(s.session_id) : '');
-      if (skip) url += '&skip_permissions=1';
-      window.location.href = url;
+      postJson('/api/capture', {
+        pid: s.pid,
+        name: s.project_name,
+        skip_permissions: skip
+      }).then(function(data) {
+        window.location.href = data.url;
+      }).catch(function(err) {
+        showError(err.message);
+      });
       return;
     }
     _originalLaunchSession(skip);
@@ -1024,73 +1092,48 @@
 
   loadCapturable();
 
-  // ── Pull to refresh (mobile) ──
+  // ── Pull to Refresh ──
   (function() {
-    var ptr = document.getElementById('ptr');
-    var icon = document.getElementById('ptr-icon');
-    var text = document.getElementById('ptr-text');
     var startY = 0;
     var pulling = false;
-    var distance = 0;
-    var threshold = 60;
+    var threshold = 80;
+    var spinner = document.getElementById('ptr-spinner');
+    var svgEl = spinner.querySelector('svg');
 
-    function hasActiveModal() {
-      var modals = ['folder-modal', 'skip-modal'];
-      return modals.some(function(id){
-        var el = document.getElementById(id);
-        return el && el.classList.contains('active');
-      });
-    }
-
-    window.addEventListener('touchstart', function(e) {
-      if (hasActiveModal()) return;
-      if (document.scrollingElement.scrollTop === 0) {
+    document.addEventListener('touchstart', function(e) {
+      if (window.scrollY === 0 && !document.querySelector('.modal-overlay.active')) {
         startY = e.touches[0].clientY;
         pulling = true;
-        distance = 0;
-        ptr.style.transition = 'none';
-        icon.classList.remove('spin');
-        text.textContent = 'Pull to refresh';
       }
     }, { passive: true });
 
-    window.addEventListener('touchmove', function(e) {
+    document.addEventListener('touchmove', function(e) {
       if (!pulling) return;
-      var currentY = e.touches[0].clientY;
-      var dy = currentY - startY;
-      if (dy > 0) {
-        // Reduce sensitivity and cap distance
-        distance = Math.min(80, dy * 0.6);
-        // Prevent the native bounce while pulling
-        e.preventDefault();
-        ptr.style.transform = 'translateY(' + (distance) + 'px)';
-        // Rotate icon to give feedback
-        icon.style.transform = 'rotate(' + Math.min(180, distance * 3) + 'deg)';
-        text.textContent = distance > threshold ? 'Release to refresh' : 'Pull to refresh';
-      }
-    }, { passive: false });
+      var dy = e.touches[0].clientY - startY;
+      if (dy < 0) { pulling = false; return; }
+      var progress = Math.min(dy / threshold, 1);
+      var translateY = Math.min(dy * 0.4, 50) - 40;
+      spinner.style.transform = 'translateY(' + translateY + 'px)';
+      spinner.style.opacity = progress;
+      spinner.style.transition = 'none';
+      svgEl.style.transform = 'rotate(' + (progress * 180) + 'deg)';
+    }, { passive: true });
 
-    function resetPTR() {
-      ptr.style.transition = 'transform 0.2s ease';
-      ptr.style.transform = 'translateY(-100%)';
-      icon.style.transform = 'rotate(0deg)';
+    document.addEventListener('touchend', function() {
+      if (!pulling) return;
       pulling = false;
-      distance = 0;
-    }
-
-    window.addEventListener('touchend', function() {
-      if (!pulling) return;
-      if (distance > threshold) {
-        // Lock indicator, show spinner, then reload
-        ptr.style.transition = 'transform 0.15s ease';
-        ptr.style.transform = 'translateY(56px)';
-        icon.classList.add('spin');
-        text.textContent = 'Refreshing…';
-        setTimeout(function(){ window.location.reload(); }, 150);
+      var currentOpacity = parseFloat(spinner.style.opacity) || 0;
+      if (currentOpacity >= 1) {
+        spinner.style.transition = 'transform 0.2s ease';
+        spinner.style.transform = 'translateY(10px)';
+        spinner.classList.add('refreshing');
+        setTimeout(function() { location.reload(); }, 400);
       } else {
-        resetPTR();
+        spinner.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
+        spinner.style.transform = 'translateY(-40px)';
+        spinner.style.opacity = '0';
       }
-    });
+    }, { passive: true });
   })();
 </script>
 </body>

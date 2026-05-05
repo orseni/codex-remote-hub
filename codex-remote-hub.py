@@ -4,24 +4,29 @@ Codex Remote Hub — Access your Codex CLI sessions from any device via Tailscal
 A lightweight web server that manages ttyd + tmux terminal sessions.
 """
 
-from typing import Optional
-import subprocess
-import os
-import sys
-import signal
-import time
-import json
-import hashlib
-import shutil
-import socket
 import glob as _glob
+import hashlib
+import html as _html
+import json
+import os
 import platform as _platform
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from socketserver import ThreadingMixIn
-from urllib.parse import unquote, parse_qs, urlparse
+import re
+import secrets
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import threading
+import time
+from collections import deque
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+from typing import Optional
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # ─── Platform Detection ─────────────────────────────────────────────────────
 
@@ -30,7 +35,7 @@ PLATFORM = _platform.system().lower()  # 'darwin', 'linux', 'windows'
 IS_WSL = False
 if PLATFORM == "linux":
     try:
-        with open("/proc/version", "r") as f:
+        with open("/proc/version") as f:
             IS_WSL = "microsoft" in f.read().lower()
     except FileNotFoundError:
         pass
@@ -49,11 +54,6 @@ def _session_name(name: str) -> str:
     return f"codex-{name}"
 
 
-# ─── Config ──────────────────────────────────────────────────────────────────
-
-HUB_PORT = int(os.environ.get("CODEX_REMOTE_HUB_PORT", 7690))
-BASE_PORT = 7800
-MAX_PORT = 7899
 def _resolve_bin(env_var: str, name: str) -> str:
     """Get binary path from env var, falling back to PATH lookup if missing or stale."""
     path = os.environ.get(env_var, "")
@@ -61,6 +61,12 @@ def _resolve_bin(env_var: str, name: str) -> str:
         return path
     return _find_bin(name)
 
+
+# ─── Config ──────────────────────────────────────────────────────────────────
+
+HUB_PORT = int(os.environ.get("CODEX_REMOTE_HUB_PORT", 7690))
+BASE_PORT = 7800
+MAX_PORT = 7899
 TTYD_BIN = _resolve_bin("TTYD_BIN", "ttyd")
 TMUX_BIN = _resolve_bin("TMUX_BIN", "tmux")
 CODEX_BIN = _resolve_bin("CODEX_BIN", "codex")
@@ -73,6 +79,14 @@ IGNORED_DIRS = {".git", "node_modules", "__pycache__", "venv", ".venv", ".tox",
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _template_cache: dict[str, str] = {}
+CSRF_TOKEN = os.environ.get("CODEX_REMOTE_HUB_CSRF_TOKEN", secrets.token_urlsafe(32))
+PORT_COUNT = MAX_PORT - BASE_PORT + 1
+SESSION_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_port_assignments: dict[str, int] = {}
+_port_lock = threading.Lock()
+_capturable_cache: tuple[float, list[dict]] = (0.0, [])
+_capturable_cache_lock = threading.Lock()
+CAPTURABLE_CACHE_TTL = float(os.environ.get("CODEX_CAPTURABLE_CACHE_TTL", "5"))
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -106,17 +120,104 @@ def _load_template(name: str) -> str:
     """Load an HTML template from templates/ with in-memory caching."""
     if name not in _template_cache:
         path = os.path.join(SCRIPT_DIR, "templates", name)
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             _template_cache[name] = f.read()
     return _template_cache[name]
 
 
+def _has_ssl_config() -> bool:
+    """Return True when hub/ttyd TLS certificate files are configured."""
+    cert_file = os.path.join(INSTALL_DIR, "hub.crt")
+    key_file = os.path.join(INSTALL_DIR, "hub.key")
+    return os.path.exists(cert_file) and os.path.exists(key_file)
+
+
+def _request_scheme() -> str:
+    """Return the scheme used by the built-in hub server."""
+    return "https" if _has_ssl_config() else "http"
+
+
+def _split_host(host_header: str) -> tuple[str, Optional[int]]:
+    """Split an HTTP Host header into hostname and port."""
+    host_header = (host_header or "").split(",", 1)[0].strip()
+    if not host_header:
+        return "localhost", HUB_PORT
+    parsed = urlparse(f"//{host_header}")
+    hostname = parsed.hostname or "localhost"
+    return hostname, parsed.port
+
+
+def _host_for_url(host_header: str) -> str:
+    """Return a Host header hostname formatted safely for URLs."""
+    hostname, _ = _split_host(host_header)
+    if ":" in hostname and not hostname.startswith("["):
+        return f"[{hostname}]"
+    return hostname
+
+
+def _html_escape(value: object) -> str:
+    """Escape a value for HTML text/attribute contexts."""
+    return _html.escape(str(value), quote=True)
+
+
+def _json_literal(value: object) -> str:
+    """Serialize a value for direct use as a JavaScript literal."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def normalize_session_name(value: str) -> str:
+    """Convert user-provided text into a safe tmux/url session name."""
+    normalized = re.sub(r"[^a-z0-9._-]+", "-", (value or "").strip().lower())
+    normalized = normalized.strip(".-_")
+    normalized = normalized[:64].strip(".-_")
+    if not normalized:
+        raise ValueError("session name is required")
+    if not SESSION_NAME_RE.fullmatch(normalized):
+        raise ValueError("invalid session name")
+    return normalized
+
+
+def validate_session_name(value: str) -> str:
+    """Validate an existing session name from a route or API payload."""
+    value = (value or "").strip()
+    if not SESSION_NAME_RE.fullmatch(value):
+        raise ValueError("invalid session name")
+    return value
+
+
+def _safe_commonpath(path: str, base: str) -> bool:
+    """Return True when path is inside base, handling path edge cases."""
+    try:
+        return os.path.commonpath([os.path.realpath(path), os.path.realpath(base)]) == os.path.realpath(base)
+    except (ValueError, OSError):
+        return False
+
+
+def _dev_root() -> str:
+    """Return a real directory for project browsing."""
+    base = os.path.realpath(os.path.expanduser(DEV_ROOT))
+    if not os.path.isdir(base):
+        base = os.path.realpath(os.path.expanduser("~"))
+    return base
+
+
+def resolve_project_directory(directory: Optional[str]) -> Optional[str]:
+    """Validate a requested project directory against DEV_ROOT."""
+    if not directory:
+        return None
+    if not isinstance(directory, str):
+        raise ValueError("invalid directory")
+    base = _dev_root()
+    target = os.path.realpath(os.path.expanduser(directory))
+    if not os.path.isdir(target) or not _safe_commonpath(target, base):
+        raise ValueError("directory is outside the configured project root")
+    return target
+
+
 def _is_codex_cli_process(command: str) -> bool:
     """Return True if the command string looks like an interactive Codex CLI process."""
-    # Must contain 'codex' somewhere
     if "codex" not in command.lower():
         return False
-    # Exclude non-CLI processes
     excludes = [
         ".vscode", "codex-remote-hub",
         "ttyd", "--print", "codex_", "electron",
@@ -125,7 +226,6 @@ def _is_codex_cli_process(command: str) -> bool:
     for ex in excludes:
         if ex in command:
             return False
-    # Must look like the CLI binary (ends with /codex or is just "codex" with args)
     parts = command.split()
     if not parts:
         return False
@@ -159,28 +259,91 @@ def _get_process_cwd(pid: int) -> Optional[str]:
     return None
 
 
+def _codex_session_id_from_file(filepath: str, cwd: str) -> Optional[str]:
+    """Return the Codex session id in filepath when its metadata matches cwd."""
+    cwd_real = os.path.realpath(os.path.expanduser(cwd))
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            for _ in range(40):
+                line = f.readline()
+                if not line:
+                    break
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if record.get("type") != "session_meta":
+                    continue
+                payload = record.get("payload", {})
+                if not isinstance(payload, dict):
+                    continue
+                meta_cwd = payload.get("cwd")
+                if not isinstance(meta_cwd, str):
+                    continue
+                if os.path.realpath(os.path.expanduser(meta_cwd)) != cwd_real:
+                    continue
+                session_id = payload.get("id")
+                if session_id:
+                    return str(session_id)
+    except (OSError, UnicodeDecodeError):
+        return None
+    return None
+
+
 def _find_latest_session_id(cwd: str) -> Optional[str]:
     """Find the most recent Codex session ID for a given project directory."""
-    # Codex stores sessions in ~/.codex/sessions/
     codex_dir = os.path.expanduser("~/.codex/sessions")
     if not os.path.isdir(codex_dir):
         return None
 
-    # Find session files sorted by most recent first
-    session_files = _glob.glob(os.path.join(codex_dir, "*.jsonl"))
+    session_files = _glob.glob(os.path.join(codex_dir, "**", "*.jsonl"), recursive=True)
     if not session_files:
         return None
 
-    for filepath in sorted(session_files, key=os.path.getmtime, reverse=True):
-        return os.path.splitext(os.path.basename(filepath))[0]
+    def mtime(path: str) -> float:
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return 0.0
+
+    for filepath in sorted(session_files, key=mtime, reverse=True):
+        session_id = _codex_session_id_from_file(filepath, cwd)
+        if session_id:
+            return session_id
 
     return None
 
 
 def port_for_name(name: str) -> int:
-    """Generate a deterministic port (7800-7899) from a session name."""
-    h = int(hashlib.md5(name.encode()).hexdigest(), 16)
-    return BASE_PORT + (h % (MAX_PORT - BASE_PORT))
+    """Return a stable port for a session, resolving hash collisions in-process."""
+    name = validate_session_name(name)
+    with _port_lock:
+        assigned = _port_assignments.get(name)
+        if assigned is not None:
+            return assigned
+
+        h = int(hashlib.md5(name.encode()).hexdigest(), 16)
+        preferred = BASE_PORT + (h % PORT_COUNT)
+        used_ports = set(_port_assignments.values())
+
+        if preferred not in used_ports:
+            _port_assignments[name] = preferred
+            return preferred
+
+        for offset in range(PORT_COUNT):
+            port = BASE_PORT + ((preferred - BASE_PORT + offset) % PORT_COUNT)
+            if port not in used_ports:
+                _port_assignments[name] = port
+                return port
+
+    raise RuntimeError("no available session ports")
+
+
+def tmux_session_exists(name: str) -> bool:
+    """Return True when a managed tmux session exists."""
+    name = validate_session_name(name)
+    session = _session_name(name)
+    return subprocess.run([TMUX_BIN, "has-session", "-t", session], capture_output=True).returncode == 0
 
 
 def _port_in_use_socket(port: int) -> bool:
@@ -197,7 +360,7 @@ def _get_listening_ports_lsof() -> set[int]:
         return set()
     try:
         out = subprocess.check_output(
-            [lsof, f"-iTCP:{BASE_PORT}-{MAX_PORT}", "-sTCP:LISTEN", "-P", "-n"],
+            [lsof, "-iTCP:7800-7899", "-sTCP:LISTEN", "-P", "-n"],
             text=True, stderr=subprocess.DEVNULL
         )
         ports: set[int] = set()
@@ -261,6 +424,8 @@ def port_in_use(port: int) -> bool:
     return _port_in_use_socket(port)
 
 
+
+
 def _cleanup_orphan_ttyd() -> None:
     """Kill ttyd processes whose tmux sessions no longer exist."""
     try:
@@ -279,21 +444,19 @@ def _cleanup_orphan_ttyd() -> None:
             continue
         if "ttyd" not in cmd or "attach-session" not in cmd:
             continue
-        # Extract session name from "... attach-session -t <session>"
         cmd_parts = cmd.split()
         session_name = None
-        for i, p in enumerate(cmd_parts):
-            if p == "attach-session" and i + 2 < len(cmd_parts) and cmd_parts[i + 1] == "-t":
+        for i, part in enumerate(cmd_parts):
+            if part == "attach-session" and i + 2 < len(cmd_parts) and cmd_parts[i + 1] == "-t":
                 session_name = cmd_parts[i + 2]
                 break
         if not session_name:
             continue
-        # Check if tmux session exists
-        r = subprocess.run(
+        result = subprocess.run(
             [TMUX_BIN, "has-session", "-t", session_name],
             capture_output=True
         )
-        if r.returncode != 0:
+        if result.returncode != 0:
             try:
                 os.kill(int(pid_str.strip()), signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
@@ -320,7 +483,10 @@ def get_sessions() -> list[dict]:
             if not line.startswith("codex-"):
                 continue
             parts = line.split("|")
-            name = parts[0].removeprefix("codex-")
+            try:
+                name = validate_session_name(parts[0].removeprefix("codex-"))
+            except (ValueError, IndexError):
+                continue
             try:
                 last_activity = datetime.fromtimestamp(int(parts[1]))
                 time_str = last_activity.strftime("%H:%M")
@@ -335,12 +501,17 @@ def get_sessions() -> list[dict]:
                 "attached": attached != "0",
                 "has_ttyd": port in ttyd_ports,
             })
+        active_names = {s["name"] for s in sessions}
+        with _port_lock:
+            for name in list(_port_assignments):
+                if name not in active_names:
+                    _port_assignments.pop(name, None)
         return sessions
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []
 
 
-def discover_capturable_sessions() -> list:
+def _discover_capturable_sessions_uncached() -> list[dict]:
     """Find Codex CLI processes running outside the hub's tmux sessions."""
     # Step 1: Get PIDs of all tmux pane processes (these are managed by us)
     tmux_pids: set = set()
@@ -371,9 +542,9 @@ def discover_capturable_sessions() -> list:
                     parent_pid = int(parts[1])
                     children_map.setdefault(parent_pid, []).append(child_pid)
             # BFS to find all descendants
-            queue = list(tmux_pids)
+            queue = deque(tmux_pids)
             while queue:
-                p = queue.pop(0)
+                p = queue.popleft()
                 for child in children_map.get(p, []):
                     if child not in tmux_tree_pids:
                         tmux_tree_pids.add(child)
@@ -430,15 +601,38 @@ def discover_capturable_sessions() -> list:
     return capturable
 
 
+def discover_capturable_sessions(force_refresh: bool = False) -> list[dict]:
+    """Find capturable sessions, with a short cache to keep dashboard loads cheap."""
+    global _capturable_cache
+    now = time.monotonic()
+    with _capturable_cache_lock:
+        cached_at, cached = _capturable_cache
+        if not force_refresh and now - cached_at < CAPTURABLE_CACHE_TTL:
+            return cached
+
+    sessions = _discover_capturable_sessions_uncached()
+
+    with _capturable_cache_lock:
+        _capturable_cache = (time.monotonic(), sessions)
+
+    return sessions
+
+
+def find_capturable_session(pid: int) -> Optional[dict]:
+    """Return a freshly verified capturable session by PID."""
+    for session in discover_capturable_sessions(force_refresh=True):
+        if session.get("pid") == pid:
+            return session
+    return None
+
+
 def get_folders(rel_path: str = "") -> dict:
     """List subdirectories under DEV_ROOT for the folder picker."""
-    base = os.path.realpath(DEV_ROOT)
-    if not os.path.isdir(base):
-        base = os.path.expanduser("~")
+    base = _dev_root()
 
     target = os.path.realpath(os.path.join(base, rel_path)) if rel_path else base
 
-    if not target.startswith(base):
+    if not _safe_commonpath(target, base):
         target = base
     if not os.path.isdir(target):
         target = base
@@ -496,7 +690,6 @@ def _ttyd_session_on_port(port: int) -> Optional[str]:
                 ["ps", "-ww", "-p", pid, "-o", "command="],
                 text=True, stderr=subprocess.DEVNULL
             )
-            # Extract session name from "... attach-session -t <session>"
             parts = cmd_out.strip().split()
             for i, part in enumerate(parts):
                 if part == "attach-session" and i + 2 < len(parts) and parts[i + 1] == "-t":
@@ -512,7 +705,6 @@ def _start_ttyd(session: str, port: int) -> None:
         existing = _ttyd_session_on_port(port)
         if existing == session:
             return
-        # Port occupied by ttyd for a different/dead session; reclaim it
         _kill_ttyd_on_port(port)
     ttyd_cmd = [
         TTYD_BIN, "-W", "-p", str(port),
@@ -521,12 +713,10 @@ def _start_ttyd(session: str, port: int) -> None:
         "-t", 'theme={"background":"#0f0f1a","foreground":"#e8e8f0","cursor":"#10a37f"}',
         "-t", "titleFixed=Codex Remote Hub",
     ]
-    # Custom index file for virtual keyboard overlay
     custom_index = os.path.join(INSTALL_DIR, "ttyd-index.html")
     if os.path.exists(custom_index):
         ttyd_cmd += ["-I", custom_index]
 
-    # HTTPS: use certs if available
     cert_file = os.path.join(INSTALL_DIR, "hub.crt")
     key_file = os.path.join(INSTALL_DIR, "hub.key")
     if os.path.exists(cert_file) and os.path.exists(key_file):
@@ -542,6 +732,8 @@ def _start_ttyd(session: str, port: int) -> None:
 
 def start_session(name: str, directory: Optional[str] = None, skip_permissions: bool = False) -> int:
     """Start a tmux + ttyd session. Returns the assigned port."""
+    name = validate_session_name(name)
+    directory = resolve_project_directory(directory)
     port = port_for_name(name)
     session = _session_name(name)
 
@@ -554,7 +746,6 @@ def start_session(name: str, directory: Optional[str] = None, skip_permissions: 
         cmd.append(CODEX_BIN)
         if skip_permissions:
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
-        # Strip CODEX_HOME to prevent "cannot launch inside another session" error
         clean_env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
         subprocess.Popen(
             cmd,
@@ -574,9 +765,9 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
     """Capture a running Codex CLI session into a tmux + ttyd session.
 
     Uses `codex fork <session_id>` to branch the conversation into a new tmux session.
-    Returns the assigned port.
+    Returns the assigned port and final session name.
     """
-    # Ensure unique session name
+    name = normalize_session_name(name)
     base_name = name
     suffix = 1
     while True:
@@ -586,12 +777,12 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
         if r.returncode != 0:
             break
         suffix += 1
-        name = f"{base_name}-{suffix}"
+        suffix_text = f"-{suffix}"
+        name = f"{base_name[:64 - len(suffix_text)]}{suffix_text}"
 
     session = _session_name(name)
     port = port_for_name(name)
 
-    # Build the codex command with fork or resume --last
     cmd = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
     if cwd and os.path.isdir(cwd):
         cmd += ["-c", cwd]
@@ -603,29 +794,24 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
     if skip_permissions:
         cmd.append("--dangerously-bypass-approvals-and-sandbox")
 
-    # Strip CODEX_HOME to prevent "cannot launch inside another session" error
     clean_env = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
     subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      env=clean_env)
     time.sleep(1.0)
 
-    # Verify the tmux session survived (codex might have failed and exited)
     r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                        capture_output=True)
-    if r.returncode != 0:
-        # fork/resume failed — try resume --last as fallback
-        if session_id:
-            cmd_fallback = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
-            if cwd and os.path.isdir(cwd):
-                cmd_fallback += ["-c", cwd]
-            cmd_fallback += [CODEX_BIN, "resume", "--last"]
-            if skip_permissions:
-                cmd_fallback.append("--dangerously-bypass-approvals-and-sandbox")
-            subprocess.Popen(cmd_fallback, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, env=clean_env)
-            time.sleep(1.0)
+    if r.returncode != 0 and session_id:
+        cmd_fallback = [TMUX_BIN, "new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
+        if cwd and os.path.isdir(cwd):
+            cmd_fallback += ["-c", cwd]
+        cmd_fallback += [CODEX_BIN, "resume", "--last"]
+        if skip_permissions:
+            cmd_fallback.append("--dangerously-bypass-approvals-and-sandbox")
+        subprocess.Popen(cmd_fallback, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, env=clean_env)
+        time.sleep(1.0)
 
-    # Final check — if still no session, start fresh codex so ttyd has something to connect to
     r = subprocess.run([TMUX_BIN, "has-session", "-t", session],
                        capture_output=True)
     if r.returncode != 0:
@@ -648,6 +834,7 @@ def capture_session(pid: int, session_id: Optional[str], cwd: str,
 
 def stop_session(name: str) -> None:
     """Stop ttyd and kill the tmux session."""
+    name = validate_session_name(name)
     port = port_for_name(name)
     session = _session_name(name)
 
@@ -656,7 +843,6 @@ def stop_session(name: str) -> None:
         subprocess.run([pkill, "-f", f"ttyd.*-p {port}"],
                        capture_output=True)
     else:
-        # Fallback: find and kill ttyd process via port
         try:
             lsof = shutil.which("lsof")
             if lsof:
@@ -671,6 +857,8 @@ def stop_session(name: str) -> None:
 
     subprocess.run([TMUX_BIN, "kill-session", "-t", session],
                    capture_output=True)
+    with _port_lock:
+        _port_assignments.pop(name, None)
 
 
 # ─── HTML Rendering ─────────────────────────────────────────────────────────
@@ -683,13 +871,17 @@ def render_hub(host: str) -> str:
     for s in sessions:
         status_class = "active" if s["has_ttyd"] else "idle"
         attached_badge = '<span class="badge active">connected</span>' if s["attached"] else ""
+        name = s["name"]
+        name_html = _html_escape(name)
+        name_url = quote(name)
+        stop_label = _html_escape(f"Stop session {name}")
         session_cards += f"""
-        <div class="card">
-          <a href="/start/{s['name']}" class="card-link">
+        <div class="card card-{status_class}">
+          <a href="/terminal/{name_url}" class="card-link">
             <div class="card-left">
               <span class="status-dot {status_class}"></span>
               <div>
-                <div class="card-name">{s['name']}</div>
+                <div class="card-name">{name_html}</div>
                 <div class="card-meta">port {s['port']} &middot; {s['time']}</div>
               </div>
             </div>
@@ -698,7 +890,7 @@ def render_hub(host: str) -> str:
               <span class="arrow">&rsaquo;</span>
             </div>
           </a>
-          <button class="stop-btn" onclick="event.preventDefault();if(confirm('Stop session {s['name']}?'))location='/stop/{s['name']}'">
+          <button class="stop-btn" type="button" data-session="{name_html}" aria-label="{stop_label}">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </button>
         </div>"""
@@ -720,28 +912,96 @@ def render_hub(host: str) -> str:
     return (html
             .replace("{{COUNT_TEXT}}", count_text)
             .replace("{{SESSION_CARDS}}", session_cards)
-            .replace("{{VERSION}}", VERSION))
+            .replace("{{VERSION}}", VERSION)
+            .replace("{{CSRF_TOKEN}}", _json_literal(CSRF_TOKEN)))
 
 
 def render_terminal(name: str, port: int, host: str) -> str:
     """Render the terminal wrapper page."""
-    terminal_url = f"https://{host}:{port}"
+    name = validate_session_name(name)
+    terminal_url = f"{_request_scheme()}://{_host_for_url(host)}:{port}"
     html = _load_template("terminal.html")
-    return html.replace("{{SESSION_NAME}}", name).replace("{{TERMINAL_URL}}", terminal_url)
+    return (html
+            .replace("{{SESSION_NAME_HTML}}", _html_escape(name))
+            .replace("{{SESSION_NAME_JSON}}", _json_literal(name))
+            .replace("{{TERMINAL_URL_JSON}}", _json_literal(terminal_url))
+            .replace("{{CSRF_TOKEN}}", _json_literal(CSRF_TOKEN)))
 
 
 # ─── HTTP Handler ────────────────────────────────────────────────────────────
 
 class HubHandler(BaseHTTPRequestHandler):
+    def _security_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "img-src 'self' data:; "
+            "style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "frame-src http: https:; "
+            "connect-src 'self'; "
+            "form-action 'self'; "
+            "base-uri 'none'"
+        )
+        if _has_ssl_config():
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
+
+    def _is_allowed_origin(self, origin: str) -> bool:
+        if not origin:
+            return True
+        parsed = urlparse(origin)
+        if parsed.scheme != _request_scheme():
+            return False
+        origin_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        host_name, host_port = _split_host(self.headers.get("Host", f"localhost:{HUB_PORT}"))
+        expected_port = host_port or HUB_PORT
+        if parsed.hostname != host_name:
+            return False
+        return origin_port == expected_port or BASE_PORT <= origin_port <= MAX_PORT
+
     def _cors_headers(self):
         origin = self.headers.get("Origin", "")
-        if origin:
+        if origin and self._is_allowed_origin(origin):
             self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token")
+
+    def _csrf_ok(self) -> bool:
+        token = self.headers.get("X-CSRF-Token", "")
+        if token != CSRF_TOKEN:
+            self._send_json({"error": "invalid csrf token"}, 403)
+            return False
+        origin = self.headers.get("Origin", "")
+        if origin and not self._is_allowed_origin(origin):
+            self._send_json({"error": "origin not allowed"}, 403)
+            return False
+        return True
+
+    def _read_json(self, max_bytes: int = 16384) -> dict:
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except ValueError as exc:
+            raise ValueError("invalid content length") from exc
+        if content_length <= 0:
+            return {}
+        if content_length > max_bytes:
+            raise ValueError("request body too large")
+        body = self.rfile.read(content_length)
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid json") from exc
+        if not isinstance(data, dict):
+            raise ValueError("json body must be an object")
+        return data
 
     def do_OPTIONS(self):
         self.send_response(204)
+        self._security_headers()
         self._cors_headers()
         self.end_headers()
 
@@ -752,108 +1012,73 @@ class HubHandler(BaseHTTPRequestHandler):
 
         # Start session
         if path.startswith("/start/"):
-            name = path.split("/start/")[1].strip("/")
-            if not name:
-                self.send_response(302)
-                self.send_header("Location", "/")
-                self.end_headers()
-                return
-            directory = qs.get("dir", [None])[0]
-            skip_permissions = qs.get("skip_permissions", ["0"])[0] == "1"
-            start_session(name, directory, skip_permissions)
-            self.send_response(302)
-            self.send_header("Location", f"/terminal/{name}")
-            self.end_headers()
+            self._send_method_not_allowed()
             return
 
         # Terminal wrapper
         if path.startswith("/terminal/"):
-            name = path.split("/terminal/")[1].strip("/")
-            if not name:
+            try:
+                name = validate_session_name(path.split("/terminal/")[1].strip("/"))
+            except ValueError:
                 self.send_response(302)
                 self.send_header("Location", "/")
+                self._security_headers()
+                self.end_headers()
+                return
+            session = _session_name(name)
+            if not tmux_session_exists(name):
+                self.send_response(302)
+                self.send_header("Location", "/?error=session_missing")
+                self._security_headers()
                 self.end_headers()
                 return
             port = port_for_name(name)
-            host = self.headers.get("Host", "localhost").split(":")[0]
+            host = self.headers.get("Host", "localhost")
+            _start_ttyd(session, port)
             html = render_terminal(name, port, host)
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
+            self._security_headers()
             self.end_headers()
             self.wfile.write(html.encode())
             return
 
         # Stop session
         if path.startswith("/stop/"):
-            name = path.split("/stop/")[1].strip("/")
-            stop_session(name)
-            self.send_response(302)
-            self.send_header("Location", "/")
-            self.end_headers()
+            self._send_method_not_allowed()
             return
 
         # API: list sessions (JSON)
         if path == "/api/sessions":
             sessions = get_sessions()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(sessions).encode())
+            self._send_json(sessions)
             return
 
         # API: check if ttyd is ready
         if path.startswith("/api/ttyd-ready/"):
-            name = path.split("/api/ttyd-ready/")[1].strip("/")
+            try:
+                name = validate_session_name(path.split("/api/ttyd-ready/")[1].strip("/"))
+            except ValueError:
+                self._send_json({"error": "invalid session name"}, 400)
+                return
+            if not tmux_session_exists(name):
+                self._send_json({"ready": False, "port": None})
+                return
             port = port_for_name(name)
-            ready = port_in_use(port)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "no-cache, no-store")
-            self.end_headers()
-            self.wfile.write(json.dumps({"ready": ready, "port": port}).encode())
+            ready = _port_in_use_socket(port)
+            self._send_json({"ready": ready, "port": port})
             return
 
         # API: list capturable sessions (JSON)
         if path == "/api/capturable":
             sessions = discover_capturable_sessions()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "no-cache, no-store")
-            self.end_headers()
-            self.wfile.write(json.dumps(sessions).encode())
+            self._send_json(sessions)
             return
 
         # Capture a running Codex CLI session
         if path == "/capture":
-            try:
-                pid = int(qs.get("pid", [0])[0])
-            except (ValueError, IndexError):
-                pid = 0
-            cwd = qs.get("cwd", [""])[0]
-            session_id = qs.get("session_id", [None])[0]
-            name = qs.get("name", [""])[0]
-            skip_permissions = qs.get("skip_permissions", ["0"])[0] == "1"
-
-            if not pid or not name:
-                self.send_response(302)
-                self.send_header("Location", "/")
-                self.end_headers()
-                return
-
-            # Verify the process still exists
-            try:
-                os.kill(pid, 0)
-            except (ProcessLookupError, PermissionError):
-                self.send_response(302)
-                self.send_header("Location", "/?error=process_gone")
-                self.end_headers()
-                return
-
-            port, final_name = capture_session(pid, session_id, cwd, name, skip_permissions)
-            self.send_response(302)
-            self.send_header("Location", f"/terminal/{final_name}")
-            self.end_headers()
+            self._send_method_not_allowed()
             return
 
         # Download SSL certificate
@@ -865,10 +1090,12 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "application/x-x509-ca-cert")
                 self.send_header("Content-Disposition", "attachment; filename=codex-remote-hub.crt")
+                self._security_headers()
                 self.end_headers()
                 self.wfile.write(cert_data)
             else:
                 self.send_response(404)
+                self._security_headers()
                 self.end_headers()
             return
 
@@ -876,10 +1103,7 @@ class HubHandler(BaseHTTPRequestHandler):
         if path == "/api/folders":
             rel_path = qs.get("path", [""])[0]
             data = get_folders(rel_path)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(data).encode())
+            self._send_json(data)
             return
 
         # Icon
@@ -893,10 +1117,12 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "image/png")
                 self.send_header("Cache-Control", "public, max-age=86400")
+                self._security_headers()
                 self.end_headers()
                 self.wfile.write(icon_data)
             else:
                 self.send_response(404)
+                self._security_headers()
                 self.end_headers()
             return
 
@@ -906,27 +1132,98 @@ class HubHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
+        self._security_headers()
         self.end_headers()
         self.wfile.write(html.encode())
 
-    def _send_json(self, data: dict, status: int = 200):
+    def _send_json(self, data: object, status: int = 200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self._security_headers()
         self._cors_headers()
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
+
+    def _send_method_not_allowed(self):
+        self.send_response(405)
+        self.send_header("Allow", "POST")
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self._security_headers()
+        self.end_headers()
+        self.wfile.write(b"Use POST for this action.")
 
     def do_POST(self):
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
 
+        if not self._csrf_ok():
+            return
+
+        try:
+            data = self._read_json(max_bytes=12000)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, 400)
+            return
+
+        if path == "/api/start":
+            try:
+                name = normalize_session_name(str(data.get("name", "")))
+                directory = resolve_project_directory(data.get("dir"))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
+
+            skip_permissions = bool(data.get("skip_permissions"))
+            port = start_session(name, directory, skip_permissions)
+            self._send_json({"ok": True, "name": name, "port": port, "url": f"/terminal/{quote(name)}"})
+            return
+
+        if path == "/api/stop":
+            try:
+                name = validate_session_name(str(data.get("name", "")))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
+            stop_session(name)
+            self._send_json({"ok": True})
+            return
+
+        if path == "/api/capture":
+            try:
+                pid = int(data.get("pid", 0))
+            except (TypeError, ValueError):
+                self._send_json({"error": "invalid pid"}, 400)
+                return
+
+            capturable = find_capturable_session(pid)
+            if not capturable:
+                self._send_json({"error": "process is not capturable"}, 404)
+                return
+
+            try:
+                name = normalize_session_name(str(data.get("name") or capturable["project_name"]))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
+
+            port, final_name = capture_session(
+                pid,
+                capturable.get("session_id"),
+                capturable.get("cwd", ""),
+                name,
+                bool(data.get("skip_permissions")),
+            )
+            self._send_json({"ok": True, "name": final_name, "port": port, "url": f"/terminal/{quote(final_name)}"})
+            return
+
         # API: send special key via tmux
         if path.startswith("/api/send-keys/"):
-            name = path.split("/api/send-keys/")[1].strip("/")
+            try:
+                name = validate_session_name(path.split("/api/send-keys/")[1].strip("/"))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
             session = _session_name(name)
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length)
-            data = json.loads(body)
             key = data.get("key", "")
 
             allowed_keys = {
@@ -940,23 +1237,27 @@ class HubHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "key not allowed"}, 400)
                 return
 
-            subprocess.run(
+            result = subprocess.run(
                 [TMUX_BIN, "send-keys", "-t", session, key],
                 capture_output=True
             )
+            if result.returncode != 0:
+                self._send_json({"error": "tmux session not available"}, 404)
+                return
             self._send_json({"ok": True})
             return
 
         # API: send text (paste) via tmux
         if path.startswith("/api/send-text/"):
-            name = path.split("/api/send-text/")[1].strip("/")
+            try:
+                name = validate_session_name(path.split("/api/send-text/")[1].strip("/"))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
             session = _session_name(name)
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length)
-            data = json.loads(body)
             text = data.get("text", "")
 
-            if not text or len(text) > 10000:
+            if not isinstance(text, str) or not text or len(text) > 10000:
                 self._send_json({"error": "invalid text"}, 400)
                 return
 
@@ -965,41 +1266,86 @@ class HubHandler(BaseHTTPRequestHandler):
                 input=text, capture_output=True, text=True
             )
             if proc.returncode == 0:
-                subprocess.run(
+                paste = subprocess.run(
                     [TMUX_BIN, "paste-buffer", "-t", session],
                     capture_output=True
                 )
+                if paste.returncode != 0:
+                    self._send_json({"error": "tmux session not available"}, 404)
+                    return
+            else:
+                self._send_json({"error": "failed to load tmux buffer"}, 500)
+                return
 
             self._send_json({"ok": True})
             return
 
+        # API: focus terminal by leaving tmux copy-mode when touch-scroll left it active
+        if path.startswith("/api/focus/"):
+            try:
+                name = validate_session_name(path.split("/api/focus/")[1].strip("/"))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
+            session = _session_name(name)
+
+            mode = subprocess.run(
+                [TMUX_BIN, "display-message", "-p", "-t", session, "#{pane_in_mode}"],
+                capture_output=True,
+                text=True
+            )
+            if mode.returncode != 0:
+                self._send_json({"error": "tmux session not available"}, 404)
+                return
+
+            exited_mode = mode.stdout.strip() == "1"
+            if exited_mode:
+                result = subprocess.run(
+                    [TMUX_BIN, "send-keys", "-t", session, "Escape"],
+                    capture_output=True
+                )
+                if result.returncode != 0:
+                    self._send_json({"error": "tmux session not available"}, 404)
+                    return
+
+            self._send_json({"ok": True, "exited_mode": exited_mode})
+            return
+
         # API: scroll via tmux copy-mode
         if path.startswith("/api/scroll/"):
-            name = path.split("/api/scroll/")[1].strip("/")
+            try:
+                name = validate_session_name(path.split("/api/scroll/")[1].strip("/"))
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, 400)
+                return
             session = _session_name(name)
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length)
-            data = json.loads(body)
             direction = data.get("direction", "")
 
             if direction not in ("up", "down"):
                 self._send_json({"error": "invalid direction"}, 400)
                 return
 
-            subprocess.run(
+            result = subprocess.run(
                 [TMUX_BIN, "copy-mode", "-t", session],
                 capture_output=True
             )
+            if result.returncode != 0:
+                self._send_json({"error": "tmux session not available"}, 404)
+                return
             key = "PageUp" if direction == "up" else "PageDown"
-            subprocess.run(
+            result = subprocess.run(
                 [TMUX_BIN, "send-keys", "-t", session, key],
                 capture_output=True
             )
+            if result.returncode != 0:
+                self._send_json({"error": "tmux session not available"}, 404)
+                return
 
             self._send_json({"ok": True})
             return
 
         self.send_response(404)
+        self._security_headers()
         self.end_headers()
 
     def log_message(self, format, *args):
@@ -1067,6 +1413,15 @@ def cmd_status():
 
 
 def cmd_start():
+    # Kill any existing process holding the hub port (e.g. old version, zombie)
+    existing_pid = find_hub_pid()
+    if existing_pid:
+        try:
+            os.kill(existing_pid, signal.SIGTERM)
+            time.sleep(0.5)
+        except (ProcessLookupError, PermissionError):
+            pass
+
     # Check dependencies before starting
     missing = _check_dependencies()
     if missing:
@@ -1144,7 +1499,7 @@ def main():
                            os.path.join(INSTALL_DIR, "hub.log"),
                            os.path.join(INSTALL_DIR, "hub-error.log")])
     else:
-        print(f"Usage: codex-remote-hub.py {{start|stop|restart|status|logs}}")
+        print("Usage: codex-remote-hub.py {start|stop|restart|status|logs}")
         sys.exit(1)
 
 

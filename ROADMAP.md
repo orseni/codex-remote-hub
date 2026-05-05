@@ -25,8 +25,9 @@ Community-driven feature list for Codex Remote Hub. Pick any item and open a PR!
 ### Infrastructure
 - [ ] **Docker container** — run Codex Remote Hub in a container for easier deployment
 - [ ] **Homebrew tap** — `brew install codex-remote-hub` for macOS users
-- [ ] **Automated test suite** — pytest for the server, Playwright for the UI
-- [ ] **CI/CD pipeline** — GitHub Actions for linting, testing, and releases
+- [x] **Baseline automated test suite** — stdlib unit tests for core server helpers
+- [x] **Baseline CI pipeline** — GitHub Actions for linting and tests
+- [ ] **Expanded test suite** — Playwright coverage for dashboard and mobile terminal flows
 
 ### Internationalization
 - [ ] **i18n framework** — support multiple languages
